@@ -1,0 +1,15 @@
+[package]
+name = "wirecrab-codegen"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.85"
+
+[lib]
+name = "wirecrab_codegen"
+path = "src/lib.rs"
+
+[dependencies]
+wirecrab-spec = { path = "../spec" }
+tera = "1.20"
+thiserror = "1.0"
