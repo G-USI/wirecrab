@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Running pre-commit checks..."
+
+# REUSE compliance (mandatory)
+echo "Checking REUSE compliance..."
+reuse lint
+
+# Autoformat
+echo "Formatting code..."
+cargo fmt
+
+# Clippy (lint + autofix + error on warnings)
+echo "Fixing and checking clippy lints..."
+cargo clippy --all-targets --fix --allow-dirty -- -D warnings -A missing_docs
+
+# Re-stage modified files
+echo "Restaging modified files..."
+git update-index --refresh 2>/dev/null || true
+
+echo "Pre-commit checks passed!"

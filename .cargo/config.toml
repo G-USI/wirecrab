@@ -1,0 +1,26 @@
+# Cargo configuration for Wirecrab cross-compilation targets
+
+[build]
+# Default to native x86_64 for standard development
+# Override with: cargo build --target <target>
+target = "x86_64-unknown-linux-gnu"
+
+# ESP32 targets - these use espflash for flashing
+# Note: First build will compile std from source (slower)
+# Run `espup install` once for pre-built std (faster)
+[target.xtensa-esp32-none-elf]
+runner = "espflash flash --monitor"
+
+[target.xtensa-esp32s2-none-elf]
+runner = "espflash flash --monitor"
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor"
+
+[target.riscv32imc-unknown-none-elf]
+runner = "espflash flash --monitor"
+
+# Linux ARM64 - cross-compilation only (no runner)
+[target.aarch64-unknown-linux-gnu]
+# Add linker if needed:
+# linker = "aarch64-linux-gnu-gcc"

@@ -1,0 +1,11 @@
+version = 1
+
+[[annotations]]
+path = ["**/*"]
+SPDX-FileCopyrightText = "2026 wirecrab contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["*.lock", ".gitignore", ".envrc", ".direnv/**"]
+SPDX-FileCopyrightText = "2026 wirecrab contributors"
+SPDX-License-Identifier = "CC0-1.0"
