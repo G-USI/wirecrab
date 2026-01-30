@@ -1,5 +1,3 @@
-#![forbid(unsafe_code)]
-
 pub mod application {}
 
 pub mod codec {}
