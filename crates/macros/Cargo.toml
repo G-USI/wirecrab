@@ -1,16 +1,16 @@
 [package]
 name = "wirecrab-macros"
-version = "0.1.0"
-edition = "2024"
-license = "Apache-2.0"
-rust-version = "1.85"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
 [lib]
 proc-macro = true
 path = "src/lib.rs"
 
 [dependencies]
-syn = "2.0"
-quote = "1.0"
-proc-macro2 = "1.0"
-wirecrab-spec = { path = "../spec" }
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+wirecrab-spec = { workspace = true }
