@@ -8,7 +8,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
-    cross-rs.url = "github:cross-rs/cross";
   };
 
   outputs = { self, nixpkgs, rust-overlay, flake-utils }:
@@ -27,7 +26,7 @@
             darwin.apple_sdk.frameworks.SystemConfiguration
           ];
       in {
-      devShells.default = pkgs.mkShell {
+        devShells.default = pkgs.mkShell {
           buildInputs = buildInputs
             ++ [ rustToolchain pkgs.reuse pkgs.commitlint ];
 
@@ -39,13 +38,5 @@
             echo "Git hooks configured: .githooks"
           '';
         };
-
-      devShells.esp32 = pkgs.mkShell {
-          buildInputs = with pkgs; [ cross.packages.x86_64-unknown-linux-gnu.build-std ];
-          
-          shellHook = ''
-            # ESP32 cross-compilation via cross-rs
-            echo "ESP32 build environment: xtensa-esp32-espidf"
-          '';
-        };
+      });
 }
