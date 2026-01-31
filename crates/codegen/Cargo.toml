@@ -13,3 +13,4 @@ path = "src/lib.rs"
 wirecrab-spec = { workspace = true }
 tera = { workspace = true }
 thiserror = { workspace = true }
+anyhow = { workspace = true }

@@ -61,4 +61,8 @@ pub mod structs {
 
     pub use core::option::Option;
     pub use core::result::Result;
+
+    pub use anyhow::Error as AnyhowError;
+    pub use async_trait::async_trait;
+    pub use thiserror::Error as ThisError;
 }

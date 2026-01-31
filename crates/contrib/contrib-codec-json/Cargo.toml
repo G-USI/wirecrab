@@ -11,5 +11,6 @@ path = "src/lib.rs"
 
 [dependencies]
 wirecrab-kernel = { workspace = true }
+anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
