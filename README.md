@@ -6,7 +6,7 @@ A rewrite of [asyncapi-python](https://github.com/g-usi/asyncapi-python).
 
 ## Features
 
-- Parse and validate AsyncAPI 3.0 specs
+- Parse and validate AsyncAPI 3 specs
 - Generate type-safe code for Rust, Python, and TypeScript
 - Plugin architecture for wire protocols and codecs (JSON, etc.)
 - Proc macro for Rust (`#[asyncapi("spec.yaml")]`)

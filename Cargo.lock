@@ -1252,6 +1252,7 @@ dependencies = [
 name = "wirecrab-codegen"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "tera",
  "thiserror",
  "wirecrab-spec",
@@ -1261,6 +1262,7 @@ dependencies = [
 name = "wirecrab-contrib-codec-json"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
  "wirecrab-kernel",
@@ -1270,6 +1272,7 @@ dependencies = [
 name = "wirecrab-contrib-wire-memory"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "wirecrab-kernel",
 ]
 
@@ -1277,6 +1280,7 @@ dependencies = [
 name = "wirecrab-kernel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "bytes",
  "serde",
@@ -1299,6 +1303,7 @@ dependencies = [
 name = "wirecrab-spec"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "serde",
  "serde_json",
  "serde_yaml",
