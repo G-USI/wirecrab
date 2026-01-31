@@ -1,0 +1,3 @@
+[submodule "submodules/asyncapi-spec"]
+	path = submodules/asyncapi-spec
+	url = https://github.com/asyncapi/spec.git
