@@ -59,6 +59,7 @@ pub mod structs {
     #[cfg(not(feature = "std"))]
     pub use alloc::collections::BinaryHeap;
 
+    pub use core::any::Any;
     pub use core::option::Option;
     pub use core::result::Result;
 
