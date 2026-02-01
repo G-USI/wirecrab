@@ -101,14 +101,14 @@ impl RefResolver {
 
         if self.docs.borrow().contains_key(&*doc_ref.location) {
             let doc = self.docs.borrow()[&*doc_ref.location].clone();
-            return self.traverse_and_clone(&doc, &*doc_ref.addr, cache_key);
+            return self.traverse_and_clone(&doc, &doc_ref.addr, cache_key);
         }
 
-        let full_doc = self.resolve_doc(&*doc_ref.location)?;
+        let full_doc = self.resolve_doc(&doc_ref.location)?;
         self.docs
             .borrow_mut()
             .insert((*doc_ref.location).clone(), full_doc.clone());
-        self.traverse_and_clone(&full_doc, &*doc_ref.addr, cache_key)
+        self.traverse_and_clone(&full_doc, &doc_ref.addr, cache_key)
     }
 
     fn traverse_and_clone(
@@ -122,7 +122,7 @@ impl RefResolver {
         for key in addr.iter() {
             current = match current {
                 Value::Mapping(map) => map
-                    .get(&Value::String(key.to_string()))
+                    .get(Value::String(key.to_string()))
                     .ok_or_else(|| RefError::Http(format!("Key not found: {}", key)))?,
                 Value::Sequence(seq) => {
                     let index: usize = key
