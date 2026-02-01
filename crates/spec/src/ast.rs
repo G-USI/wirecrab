@@ -16,7 +16,7 @@ pub enum SpecError {
 
 /// Parse AsyncAPI spec string into YAML AST.
 ///
-/// Returns a generic `serde_yaml::Value` (the AST) rather than
+/// Returns a generic `serde_json::Value` (the AST) rather than
 /// typed document structure. This allows for post-processing
 /// and inspection before conversion to concrete types.
 ///
@@ -26,7 +26,7 @@ pub enum SpecError {
 ///
 /// # Returns
 ///
-/// * `Ok(serde_yaml::Value)` - Parsed AST structure
+/// * `Ok(serde_json::Value)` - Parsed AST structure
 /// * `Err(SpecError)` - Parsing error
 ///
 /// # Examples
@@ -37,7 +37,7 @@ pub enum SpecError {
 /// let yaml = "asyncapi: 3.1.0\ninfo:\n  title: Test\n  version: 1.0.0";
 /// let ast = parse_yaml_ast(yaml).unwrap();
 /// ```
-pub fn parse_yaml_ast(yaml: &str) -> Result<serde_yaml::Value, SpecError> {
+pub fn parse_yaml_ast(yaml: &str) -> Result<serde_json::Value, SpecError> {
     Ok(serde_yaml::from_str(yaml)?)
 }
 
@@ -54,56 +54,52 @@ mod tests {
         include_str!("../../../submodules/asyncapi-spec/examples/streetlights-kafka-asyncapi.yml");
     const RPC_SERVER: &str =
         include_str!("../../../submodules/asyncapi-spec/examples/rpc-server-asyncapi.yml");
-    const INVALID_YAML: &str = "asyncapi: 3.1.0\nasyncapi: 2.0.0";
+    const INVALID_YAML: &str = "asyncapi: 3.1.0\n  invalid indentation: true";
 
     #[test]
     fn test_parse_simple_example() {
         let ast = parse_yaml_ast(SIMPLE_EXAMPLE).unwrap();
 
-        assert!(ast.is_mapping());
-        let map = ast.as_mapping().unwrap();
+        assert!(ast.is_object());
+        let map = ast.as_object().unwrap();
 
         assert_eq!(
-            map.get(serde_yaml::Value::String("asyncapi".to_string()))
-                .unwrap(),
-            &serde_yaml::Value::String("3.1.0".to_string())
+            map.get("asyncapi").unwrap(),
+            &serde_json::Value::String("3.1.0".to_string())
         );
     }
 
     #[test]
     fn test_parse_with_components() {
         let ast = parse_yaml_ast(ANYOF_EXAMPLE).unwrap();
-        let map = ast.as_mapping().unwrap();
+        let map = ast.as_object().unwrap();
 
-        let components = map
-            .get(serde_yaml::Value::String("components".to_string()))
-            .unwrap();
-        let components_map = components.as_mapping().unwrap();
+        let components = map.get("components").unwrap();
+        let components_map = components.as_object().unwrap();
 
-        assert!(components_map.contains_key(serde_yaml::Value::String("messages".to_string())));
+        assert!(components_map.contains_key("messages"));
     }
 
     #[test]
     fn test_parse_streetlights_kafka() {
         let ast = parse_yaml_ast(STREETLIGHTS_KAFKA).unwrap();
-        let map = ast.as_mapping().unwrap();
+        let map = ast.as_object().unwrap();
 
         assert_eq!(
-            map.get(serde_yaml::Value::String("asyncapi".to_string()))
-                .unwrap(),
-            &serde_yaml::Value::String("3.1.0".to_string())
+            map.get("asyncapi").unwrap(),
+            &serde_json::Value::String("3.1.0".to_string())
         );
 
-        assert!(map.contains_key(serde_yaml::Value::String("channels".to_string())));
+        assert!(map.contains_key("channels"));
     }
 
     #[test]
     fn test_parse_rpc_server() {
         let ast = parse_yaml_ast(RPC_SERVER).unwrap();
-        let map = ast.as_mapping().unwrap();
+        let map = ast.as_object().unwrap();
 
-        assert!(map.contains_key(serde_yaml::Value::String("id".to_string())));
-        assert!(map.contains_key(serde_yaml::Value::String("channels".to_string())));
+        assert!(map.contains_key("id"));
+        assert!(map.contains_key("channels"));
     }
 
     #[test]

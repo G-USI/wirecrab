@@ -1,7 +1,8 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
 use kernel::prelude::*;
-use serde_yaml::Value;
+use serde_json::Value;
+use serde_yaml;
 use thiserror::Error;
 use url::Url;
 
@@ -147,10 +148,10 @@ impl RefResolver {
 
         for key in addr.iter() {
             current = match current {
-                Value::Mapping(map) => map
-                    .get(Value::String(key.to_string()))
+                Value::Object(map) => map
+                    .get(key)
                     .ok_or_else(|| RefError::Http(format!("Key not found: {}", key)))?,
-                Value::Sequence(seq) => {
+                Value::Array(seq) => {
                     let index: usize = key
                         .parse()
                         .map_err(|_| RefError::Http(format!("Invalid index: {}", key)))?;

@@ -117,7 +117,7 @@ info:
 
     let doc = result.unwrap();
     let doc_value = doc.as_ref();
-    assert!(doc_value.is_mapping());
+    assert!(doc_value.is_object());
 }
 
 #[test]
