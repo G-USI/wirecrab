@@ -10,9 +10,8 @@ name = "wirecrab_spec"
 path = "src/lib.rs"
 
 [dependencies]
+kernel = { package = "wirecrab-kernel", path = "../kernel" }
 serde = { workspace = true }
-serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-url = { workspace = true }

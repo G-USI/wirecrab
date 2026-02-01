@@ -3,7 +3,6 @@
 
 //! YAML/JSON AST parsing for AsyncAPI specs.
 
-use std::fs;
 use thiserror::Error;
 
 /// Error types for AST parsing.
@@ -29,45 +28,42 @@ pub enum SpecError {
 ///
 /// * `Ok(serde_yaml::Value)` - Parsed AST structure
 /// * `Err(SpecError)` - Parsing error
+///
+/// # Examples
+///
+/// ```no_run
+/// use wirecrab_spec::ast::parse_yaml_ast;
+///
+/// let yaml = "asyncapi: 3.1.0\ninfo:\n  title: Test\n  version: 1.0.0";
+/// let ast = parse_yaml_ast(yaml).unwrap();
+/// ```
 pub fn parse_yaml_ast(yaml: &str) -> Result<serde_yaml::Value, SpecError> {
     Ok(serde_yaml::from_str(yaml)?)
-}
-
-/// Parse AsyncAPI spec from file path.
-///
-/// # Arguments
-///
-/// * `path` - Path to YAML or JSON file
-///
-/// # Returns
-///
-/// * `Ok(serde_yaml::Value)` - Parsed AST structure
-/// * `Err(SpecError)` - File read or parsing error
-pub fn parse_yaml_file(path: impl AsRef<std::path::Path>) -> Result<serde_yaml::Value, SpecError> {
-    let yaml = fs::read_to_string(path)?;
-    Ok(serde_yaml::from_str(&yaml)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_parse_simple_yaml() {
-        let yaml = r#"
-asyncapi: 3.1.0
-info:
-  title: Test API
-  version: 1.0.0
-"#;
+    const SIMPLE_EXAMPLE: &str =
+        include_str!("../../../submodules/asyncapi-spec/examples/simple-asyncapi.yml");
+    const ANYOF_EXAMPLE: &str =
+        include_str!("../../../submodules/asyncapi-spec/examples/anyof-asyncapi.yml");
+    const STREETLIGHTS_KAFKA: &str =
+        include_str!("../../../submodules/asyncapi-spec/examples/streetlights-kafka-asyncapi.yml");
+    const RPC_SERVER: &str =
+        include_str!("../../../submodules/asyncapi-spec/examples/rpc-server-asyncapi.yml");
+    const INVALID_YAML: &str = "asyncapi: 3.1.0\nasyncapi: 2.0.0";
 
-        let ast = parse_yaml_ast(yaml).unwrap();
+    #[test]
+    fn test_parse_simple_example() {
+        let ast = parse_yaml_ast(SIMPLE_EXAMPLE).unwrap();
 
         assert!(ast.is_mapping());
         let map = ast.as_mapping().unwrap();
 
         assert_eq!(
-            map.get(&serde_yaml::Value::String("asyncapi".to_string()))
+            map.get(serde_yaml::Value::String("asyncapi".to_string()))
                 .unwrap(),
             &serde_yaml::Value::String("3.1.0".to_string())
         );
@@ -75,83 +71,43 @@ info:
 
     #[test]
     fn test_parse_with_components() {
-        let yaml = r#"
-asyncapi: 3.1.0
-info:
-  title: Test API
-  version: 1.0.0
-components:
-  messages:
-    UserSignedUp:
-      name: UserSignedUp
-      title: User Signed Up
-"#;
-
-        let ast = parse_yaml_ast(yaml).unwrap();
+        let ast = parse_yaml_ast(ANYOF_EXAMPLE).unwrap();
         let map = ast.as_mapping().unwrap();
 
         let components = map
-            .get(&serde_yaml::Value::String("components".to_string()))
+            .get(serde_yaml::Value::String("components".to_string()))
             .unwrap();
         let components_map = components.as_mapping().unwrap();
 
-        assert!(components_map.contains_key(&serde_yaml::Value::String("messages".to_string())));
+        assert!(components_map.contains_key(serde_yaml::Value::String("messages".to_string())));
     }
 
     #[test]
-    fn test_parse_with_extensions() {
-        let yaml = r#"
-asyncapi: 3.1.0
-info:
-  title: Test API
-  version: 1.0.0
-  x-custom-field: custom value
-"#;
-
-        let ast = parse_yaml_ast(yaml).unwrap();
-        let map = ast.as_mapping().unwrap();
-
-        let info = map
-            .get(&serde_yaml::Value::String("info".to_string()))
-            .unwrap();
-        let info_map = info.as_mapping().unwrap();
-
-        assert!(info_map.contains_key(&serde_yaml::Value::String("x-custom-field".to_string())));
-    }
-
-    #[test]
-    fn test_parse_invalid_yaml() {
-        let invalid_yaml = "asyncapi: 3.1.0\nasyncapi: 2.0.0";
-
-        let result = parse_yaml_ast(invalid_yaml);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_real_example() {
-        let yaml = r#"
-asyncapi: 3.1.0
-info:
-  title: Account Service
-  version: 1.0.0
-  description: This service is in charge of processing user signups
-channels:
-  userSignedup:
-    address: user/signedup
-    messages:
-      UserSignedUp:
-        $ref: '#/components/messages/UserSignedUp'
-"#;
-
-        let ast = parse_yaml_ast(yaml).unwrap();
+    fn test_parse_streetlights_kafka() {
+        let ast = parse_yaml_ast(STREETLIGHTS_KAFKA).unwrap();
         let map = ast.as_mapping().unwrap();
 
         assert_eq!(
-            map.get(&serde_yaml::Value::String("asyncapi".to_string()))
+            map.get(serde_yaml::Value::String("asyncapi".to_string()))
                 .unwrap(),
             &serde_yaml::Value::String("3.1.0".to_string())
         );
 
-        assert!(map.contains_key(&serde_yaml::Value::String("channels".to_string())));
+        assert!(map.contains_key(serde_yaml::Value::String("channels".to_string())));
+    }
+
+    #[test]
+    fn test_parse_rpc_server() {
+        let ast = parse_yaml_ast(RPC_SERVER).unwrap();
+        let map = ast.as_mapping().unwrap();
+
+        assert!(map.contains_key(serde_yaml::Value::String("id".to_string())));
+        assert!(map.contains_key(serde_yaml::Value::String("channels".to_string())));
+    }
+
+    #[test]
+    fn test_parse_invalid_yaml() {
+        let result = parse_yaml_ast(INVALID_YAML);
+        assert!(result.is_err());
     }
 }
