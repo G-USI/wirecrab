@@ -68,16 +68,16 @@ pub mod structs {
     pub use thiserror::Error as ThisError;
 
     #[cfg(all(feature = "std", feature = "no-atomics"))]
-    pub use std::rc::Rc as Ref;
+    pub use std::rc::Rc as Shared;
 
     #[cfg(all(feature = "std", not(feature = "no-atomics")))]
-    pub use std::sync::Arc as Ref;
+    pub use std::sync::Arc as Shared;
 
     #[cfg(all(not(feature = "std"), feature = "no-atomics"))]
-    pub use alloc::rc::Rc as Ref;
+    pub use alloc::rc::Rc as Shared;
 
     #[cfg(all(not(feature = "std"), not(feature = "no-atomics")))]
-    pub use alloc::sync::Arc as Ref;
+    pub use alloc::sync::Arc as Shared;
 
     #[cfg(feature = "no-atomics")]
     pub trait ThreadSafe {}
