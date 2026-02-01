@@ -15,3 +15,8 @@ serde = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+ureq = "2.9"
+
+[lints.clippy]
+expect_used = "warn"
+unwrap_used = "warn"

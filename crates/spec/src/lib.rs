@@ -7,5 +7,6 @@
 //! It operates on [`kernel::document`] types from wirecrab-kernel crate.
 
 pub mod ast;
+pub mod ref_resolver;
 
 pub use kernel::document;
