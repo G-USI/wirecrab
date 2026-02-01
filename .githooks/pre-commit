@@ -7,16 +7,8 @@ echo "Running pre-commit checks..."
 echo "Checking REUSE compliance..."
 reuse lint
 
-# Autoformat
-echo "Formatting code..."
-cargo fmt
-
-# Clippy (lint + autofix + error on warnings)
+# Clippy (lint + error on warnings)
 echo "Fixing and checking clippy lints..."
-cargo clippy --all-targets --fix --allow-dirty -- -D warnings -A missing_docs
-
-# Re-stage modified files
-echo "Restaging modified files..."
-git update-index --refresh 2>/dev/null || true
+cargo clippy --all-targets -- -D warnings -A missing_docs
 
 echo "Pre-commit checks passed!"
