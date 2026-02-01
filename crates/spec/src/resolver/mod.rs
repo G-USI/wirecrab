@@ -1,12 +1,19 @@
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use kernel::prelude::*;
 use serde_yaml::Value;
 use thiserror::Error;
+use url::Url;
 
 #[derive(Debug, Error)]
 #[error("Invalid JSON Pointer")]
 pub struct DocAddressParseError;
+
+impl From<DocAddressParseError> for RefError {
+    fn from(_: DocAddressParseError) -> Self {
+        RefError::Http("Invalid JSON Pointer".to_string())
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum RefError {
@@ -20,13 +27,13 @@ pub enum RefError {
 
 pub type RefResult = Result<Shared<Value>, RefError>;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DocLocation {
     File(PathBuf),
-    Url(String),
+    Url(Url),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DocAddress(Vec<String>);
 
 pub struct DocAddressIter<'a> {
@@ -56,16 +63,23 @@ impl DocAddress {
         let parts: Vec<String> = value
             .split('/')
             .skip(1)
-            .map(|part| {
+            .enumerate()
+            .map(|(index, part)| {
                 if part.is_empty() {
+                    if index == 0 {
+                        return Ok(None);
+                    }
                     return Err(DocAddressParseError);
                 }
                 if part.contains('~') && !part.contains("~0") && !part.contains("~1") {
                     return Err(DocAddressParseError);
                 }
-                Ok(part.replace("~1", "/").replace("~0", "~"))
+                Ok(Some(part.replace("~1", "/").replace("~0", "~")))
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<Vec<Option<String>>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         Ok(DocAddress(parts))
     }
@@ -79,7 +93,7 @@ impl TryFrom<&str> for DocAddress {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DocumentRef {
     pub location: Shared<DocLocation>,
     pub addr: Shared<DocAddress>,
@@ -87,8 +101,8 @@ pub struct DocumentRef {
 
 #[derive(Default)]
 pub struct RefResolver {
-    docs: std::cell::RefCell<BTreeMap<DocLocation, Shared<Value>>>,
-    subtrees: std::cell::RefCell<BTreeMap<(DocLocation, DocAddress), Shared<Value>>>,
+    docs: std::cell::RefCell<HashMap<DocLocation, Shared<Value>>>,
+    subtrees: std::cell::RefCell<HashMap<(DocLocation, DocAddress), Shared<Value>>>,
 }
 
 impl RefResolver {
@@ -109,6 +123,18 @@ impl RefResolver {
             .borrow_mut()
             .insert((*doc_ref.location).clone(), full_doc.clone());
         self.traverse_and_clone(&full_doc, &doc_ref.addr, cache_key)
+    }
+
+    pub fn resolve_ref(&self, current_file: &str, ref_str: &str) -> RefResult {
+        let (location_str, address_str) = Self::parse_ref(ref_str, current_file)?;
+        let location = Self::resolve_location(location_str);
+        let address = DocAddress::try_from(address_str)?;
+
+        let doc_ref = DocumentRef {
+            location: Shared::new(location),
+            addr: Shared::new(address),
+        };
+        self.resolve(doc_ref)
     }
 
     fn traverse_and_clone(
@@ -164,8 +190,8 @@ impl RefResolver {
         Ok(Shared::new(value))
     }
 
-    fn resolve_doc_http(loc: &str) -> RefResult {
-        let response = ureq::get(loc)
+    fn resolve_doc_http(loc: &Url) -> RefResult {
+        let response = ureq::get(loc.as_str())
             .call()
             .map_err(|e| RefError::Http(e.to_string()))?;
         let content = response
@@ -174,4 +200,26 @@ impl RefResolver {
         let value: Value = serde_yaml::from_str(&content)?;
         Ok(Shared::new(value))
     }
+
+    fn parse_ref<'a>(
+        ref_str: &'a str,
+        current_file: &'a str,
+    ) -> Result<(&'a str, &'a str), RefError> {
+        if let Some((loc, addr)) = ref_str.split_once('#') {
+            let location = if loc.is_empty() { current_file } else { loc };
+            Ok((location, addr))
+        } else {
+            Err(RefError::Http("Invalid ref format".to_string()))
+        }
+    }
+
+    fn resolve_location(location_str: &str) -> DocLocation {
+        Url::parse(location_str)
+            .map(DocLocation::Url)
+            .unwrap_or_else(|_| DocLocation::File(PathBuf::from(location_str)))
+    }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests;

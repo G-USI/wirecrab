@@ -42,6 +42,7 @@ pub fn parse_yaml_ast(yaml: &str) -> Result<serde_yaml::Value, SpecError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
