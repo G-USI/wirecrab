@@ -66,4 +66,28 @@ pub mod structs {
     pub use anyhow::Error as AnyhowError;
     pub use async_trait::async_trait;
     pub use thiserror::Error as ThisError;
+
+    #[cfg(all(feature = "std", feature = "no-atomics"))]
+    pub use std::rc::Rc as Ref;
+
+    #[cfg(all(feature = "std", not(feature = "no-atomics")))]
+    pub use std::sync::Arc as Ref;
+
+    #[cfg(all(not(feature = "std"), feature = "no-atomics"))]
+    pub use alloc::rc::Rc as Ref;
+
+    #[cfg(all(not(feature = "std"), not(feature = "no-atomics")))]
+    pub use alloc::sync::Arc as Ref;
+
+    #[cfg(feature = "no-atomics")]
+    pub trait ThreadSafe {}
+
+    #[cfg(not(feature = "no-atomics"))]
+    pub trait ThreadSafe: Send + Sync {}
+
+    #[cfg(feature = "no-atomics")]
+    impl<T> ThreadSafe for T {}
+
+    #[cfg(not(feature = "no-atomics"))]
+    impl<T: Send + Sync> ThreadSafe for T {}
 }

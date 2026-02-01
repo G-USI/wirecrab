@@ -20,7 +20,7 @@ pub trait Wire: Lifecycle {
 }
 
 #[async_trait]
-pub trait Lifecycle: Send + Sync {
+pub trait Lifecycle: ThreadSafe {
     async fn start(&mut self) -> Result<(), AnyhowError>;
     async fn stop(&mut self) -> Result<(), AnyhowError>;
 }
