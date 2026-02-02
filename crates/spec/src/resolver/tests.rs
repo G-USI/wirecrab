@@ -117,7 +117,44 @@ info:
 
     let doc = result.unwrap();
     let doc_value = doc.as_ref();
-    assert!(doc_value.is_object());
+    assert_eq!(doc_value, &Value::String("object".to_string()));
+}
+
+#[test]
+fn refresolver_circular_dependency_detection() {
+    let resolver = RefResolver::default();
+
+    // Create a file with circular dependency
+    let yaml_content = r#"
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        friend:
+          $ref: '#/components/schemas/Admin'
+    Admin:
+      type: object
+      properties:
+        manager:
+          $ref: '#/components/schemas/User'
+"#;
+    let file_path = "circular-test.yaml";
+    std::fs::write(file_path, yaml_content).unwrap();
+
+    // Get the root document first
+    let root_doc = resolver.resolve_ref(file_path, "#/").unwrap();
+    let root_value = root_doc.as_ref().clone();
+
+    // Then try to resolve recursively (this should detect circular dependency)
+    let result = resolver.resolve_recursive(&root_value, file_path);
+
+    // Clean up
+    std::fs::remove_file(file_path).ok();
+
+    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert!(error.to_string().contains("Circular reference detected"));
 }
 
 #[test]

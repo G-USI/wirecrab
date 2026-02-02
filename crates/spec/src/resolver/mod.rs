@@ -129,13 +129,74 @@ impl RefResolver {
     pub fn resolve_ref(&self, current_file: &str, ref_str: &str) -> RefResult {
         let (location_str, address_str) = Self::parse_ref(ref_str, current_file)?;
         let location = Self::resolve_location(location_str);
-        let address = DocAddress::try_from(address_str)?;
+
+        let address_str_for_parse = if address_str.starts_with('#') {
+            address_str.to_string()
+        } else {
+            format!("#{}", address_str)
+        };
+
+        let address = DocAddress::try_from(address_str_for_parse.as_str())
+            .map_err(|e| RefError::Http(e.to_string()))?;
 
         let doc_ref = DocumentRef {
             location: Shared::new(location),
             addr: Shared::new(address),
         };
         self.resolve(doc_ref)
+    }
+
+    pub fn resolve_recursive(&self, value: &Value, current_file: &str) -> Result<Value, RefError> {
+        self.resolve_recursive_with_stack(
+            value,
+            current_file,
+            &mut std::collections::HashSet::new(),
+        )
+    }
+
+    fn resolve_recursive_with_stack(
+        &self,
+        value: &Value,
+        current_file: &str,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> Result<Value, RefError> {
+        match value {
+            Value::Object(map) => {
+                if let Some(ref_str) = map.get("$ref").and_then(|v| v.as_str()) {
+                    let ref_key = format!("{}#{}", current_file, ref_str);
+
+                    if visited.contains(&ref_key) {
+                        return Err(RefError::Http(format!(
+                            "Circular reference detected: {}",
+                            ref_str
+                        )));
+                    }
+
+                    visited.insert(ref_key.clone());
+                    let resolved = (*self.resolve_ref(current_file, ref_str)?.clone()).clone();
+
+                    self.resolve_recursive_with_stack(&resolved, current_file, visited)
+                } else {
+                    let mut new_map = serde_json::Map::new();
+                    for (key, val) in map {
+                        if key != "$ref" {
+                            let resolved =
+                                self.resolve_recursive_with_stack(val, current_file, visited)?;
+                            new_map.insert(key.clone(), resolved);
+                        }
+                    }
+                    Ok(Value::Object(new_map))
+                }
+            }
+            Value::Array(arr) => {
+                let mut new_arr = Vec::new();
+                for item in arr {
+                    new_arr.push(self.resolve_recursive_with_stack(item, current_file, visited)?);
+                }
+                Ok(Value::Array(new_arr))
+            }
+            _ => Ok(value.clone()),
+        }
     }
 
     fn traverse_and_clone(
