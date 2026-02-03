@@ -8,19 +8,27 @@
 
 pub mod ast;
 pub mod resolver;
+pub mod validation;
 pub use kernel::document::*;
 use serde_json::Value;
 
 use kernel::prelude::*;
 
 use crate::resolver::{RefError, RefResolver};
+use crate::validation::validate;
 
 #[derive(Debug, ThisError)]
 pub enum SpecError {
     #[error("Failed to resolve and populate yaml spec: {0}")]
     RefResolvingFailure(#[from] RefError),
-    #[error("Failed to deserialize spec into Document: {0}")]
-    DeserializeError(#[from] serde_json::Error),
+    #[error("Invalid spec: {0}")]
+    InvalidSpec(String),
+    #[error("Invalid AsyncAPI version: {0}")]
+    UnsupportedVersion(String),
+    #[error("Invalid schema: {0}")]
+    InvalidSchema(String),
+    #[error("Document validation failed: {0}")]
+    ValidationFailed(String),
 }
 
 pub type SpecParseResult = Result<Value, SpecError>;
@@ -35,7 +43,7 @@ pub fn parse(path: String) -> SpecParseResult {
     let resolved_document: Value = resolver.resolve_recursive(&root_value, &path)?;
 
     // -- Validate resolved document against AsyncAPI spec schema
-    // TODO: Add jsonschema validation
+    validate(&resolved_document)?;
 
     // -- Return resolved Value
     Ok(resolved_document)

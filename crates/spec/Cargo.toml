@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 ureq = "2.9"
 url = { workspace = true }
+jsonschema = "0.40"
 
 [dev-dependencies]
 tempfile = "3"

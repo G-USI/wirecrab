@@ -117,7 +117,10 @@ info:
 
     let doc = result.unwrap();
     let doc_value = doc.as_ref();
-    assert_eq!(doc_value, &Value::String("object".to_string()));
+    assert!(doc_value.is_object());
+    assert_eq!(doc_value["asyncapi"], "3.0.0");
+    assert_eq!(doc_value["info"]["title"], "Test API");
+    assert_eq!(doc_value["info"]["version"], "1.0.0");
 }
 
 #[test]
