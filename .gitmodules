@@ -1,3 +1,7 @@
 [submodule "submodules/asyncapi-spec"]
 	path = submodules/asyncapi-spec
 	url = https://github.com/asyncapi/spec.git
+[submodule "submodules/asyncapi-python"]
+	path = submodules/asyncapi-python
+	url = https://github.com/g-usi/asyncapi-python.git
+	branch = dev
