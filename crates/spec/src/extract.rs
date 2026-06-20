@@ -1,7 +1,7 @@
 use crate::SpecError;
 use kernel::document::{
     Action, AddressParameter, Channel, CorrelationId, Document, ExternalDocs, Message, Operation,
-    OperationReply, Schema, Tag,
+    OperationReply, ReplyAddress, Schema, Tag,
 };
 use kernel::prelude::*;
 use serde_json::Value;
@@ -133,8 +133,20 @@ fn extract_operation_reply(value: &Value) -> Result<OperationReply, SpecError> {
 
     let messages = extract_message_list(value.get("messages"))?;
 
+    let address = value
+        .get("address")
+        .filter(|v| v.is_object())
+        .map(|v| ReplyAddress {
+            location: v
+                .get("location")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            description: get_str(v, "description"),
+        });
+
     Ok(OperationReply {
-        address: get_str(value, "address"),
+        address,
         channel,
         messages,
     })

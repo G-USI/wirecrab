@@ -4,8 +4,14 @@ use super::message::Message;
 use crate::utils::structs::*;
 
 #[derive(Debug, Clone)]
+pub struct ReplyAddress {
+    pub location: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct OperationReply {
-    pub address: Option<String>,
+    pub address: Option<ReplyAddress>,
     pub channel: Option<Channel>,
     pub messages: Vec<Message>,
 }
