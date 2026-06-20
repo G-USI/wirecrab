@@ -14,7 +14,7 @@ pub mod document;
 pub mod utils;
 
 pub mod application {}
-pub mod codec {}
+pub mod codec;
 pub mod endpoint {}
 pub mod error;
 pub mod wire;
