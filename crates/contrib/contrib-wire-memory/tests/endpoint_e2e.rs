@@ -213,3 +213,99 @@ async fn endpoint_e2e_error_isolation() {
 
     wire.stop().await.expect("wire stopped cleanly");
 }
+
+/// Parameterized address: Publisher with `users/{user_id}` template extracts
+/// user_id from payload, resolves to `users/42`, sends with address_override.
+/// Subscriber listens on the resolved address and receives the message.
+#[tokio::test]
+async fn endpoint_e2e_parameterized_address() {
+    let mut wire = InMemoryWire::new();
+    wire.start().await.expect("wire should start");
+
+    let resolved_address = "users/42";
+    let sub_cfg = ChannelConfig::new(resolved_address.to_string(), DeliveryMode::PubSub);
+    let receiver = wire.new_receiver(&sub_cfg).await.expect("receiver created");
+
+    let schema_source =
+        r#"{"type":"object","properties":{"user_id":{"type":"string"},"event":{"type":"string"}}}"#;
+    let pub_schema = Schema {
+        format: "application/json".to_string(),
+        source: schema_source.to_string(),
+    };
+    let sub_schema = Schema {
+        format: "application/json".to_string(),
+        source: schema_source.to_string(),
+    };
+
+    let pub_codec = JsonCodec::new(&pub_schema).expect("pub codec compiles");
+    let sub_codec = JsonCodec::new(&sub_schema).expect("sub codec compiles");
+
+    let mut params = BTreeMap::new();
+    params.insert(
+        "user_id".to_string(),
+        wirecrab_kernel::document::channel::AddressParameter {
+            description: None,
+            location: "$message.payload#/user_id".to_string(),
+            key: "user_id".to_string(),
+        },
+    );
+    let pub_channel = Channel {
+        address: Some("users/{user_id}".to_string()),
+        title: None,
+        summary: None,
+        description: None,
+        messages: BTreeMap::new(),
+        parameters: params,
+        tags: Vec::new(),
+        external_docs: None,
+        key: "param-channel".to_string(),
+    };
+
+    let processed = Arc::new(AtomicUsize::new(0));
+    let processed_handler = processed.clone();
+    let handler = move |_payload: serde_json::Value, _ctx: &MessageContext| {
+        let p = processed_handler.clone();
+        async move {
+            p.fetch_add(1, Ordering::SeqCst);
+            Ok::<(), HandlerError>(())
+        }
+    };
+
+    let subscriber = Subscriber::new(sub_codec, handler, receiver);
+
+    let mut sender = wire
+        .new_sender(&ChannelConfig::new(
+            "users/{user_id}".to_string(),
+            DeliveryMode::PubSub,
+        ))
+        .await
+        .expect("sender created");
+    sender.start().await.expect("sender started");
+
+    let mut publisher = Publisher::new(pub_codec, pub_channel, sender);
+
+    let mut app = Application::new();
+    app.register_subscriber(subscriber)
+        .await
+        .expect("register_subscriber ok");
+
+    let runner = app.into_runner();
+    let _runner_handle = tokio::spawn(async move { runner.run().await });
+
+    let payload = json!({"user_id": "42", "event": "ping"});
+    publisher
+        .send(&payload)
+        .await
+        .expect("send should succeed with resolved address");
+
+    wait_for(&processed, 1, 256).await;
+
+    assert_eq!(
+        processed.load(Ordering::SeqCst),
+        1,
+        "parameterized address: subscriber on 'users/42' must receive message \
+         published via template 'users/{{user_id}}' with payload user_id=42"
+    );
+
+    wire.stop().await.expect("wire stopped cleanly");
+}
