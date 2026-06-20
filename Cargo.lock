@@ -2581,8 +2581,11 @@ name = "wirecrab-contrib-codec-json"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "jsonschema",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "tokio",
  "wirecrab-kernel",
 ]
 
@@ -2591,6 +2594,9 @@ name = "wirecrab-contrib-wire-memory"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "serde_json",
+ "tokio",
  "wirecrab-kernel",
 ]
 

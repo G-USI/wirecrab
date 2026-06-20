@@ -5,10 +5,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-[lib]
-crate-type = ["cdylib"]
-path = "src/lib.rs"
-
 [dependencies]
 wirecrab-kernel = { workspace = true }
 anyhow = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

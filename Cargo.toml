@@ -32,6 +32,7 @@ tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1.0", default-features = false }
 serde_json = "1.0"
 serde_yaml = "0.9"
+jsonschema = "0.40"
 thiserror = "2.0"
 anyhow = "1.0"
 bytes = "1.0"
@@ -44,3 +45,5 @@ tera = "1.20"
 wirecrab-kernel = { path = "crates/kernel" }
 wirecrab-spec = { path = "crates/spec" }
 wirecrab-codegen = { path = "crates/codegen" }
+wirecrab-contrib-codec-json = { path = "crates/contrib/contrib-codec-json" }
+wirecrab-contrib-wire-memory = { path = "crates/contrib/contrib-wire-memory" }
