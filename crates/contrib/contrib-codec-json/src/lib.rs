@@ -6,6 +6,8 @@
 //! [`decode`](Codec::decode) call.
 
 use anyhow::{Result, anyhow, bail};
+use serde::de::DeserializeOwned;
+use serde::ser::Serialize;
 use serde_json::Value;
 use wirecrab_kernel::codec::Codec;
 use wirecrab_kernel::document::Schema;
@@ -62,16 +64,24 @@ impl JsonCodec {
 }
 
 impl Codec for JsonCodec {
-    fn encode(&self, value: &Value) -> Result<Vec<u8>> {
-        self.validate_or_first_error(value)?;
-        serde_json::to_vec(value).map_err(|e| anyhow!("Failed to serialize: {e}"))
+    fn encode<D>(&self, value: &D) -> Result<Vec<u8>>
+    where
+        D: Serialize + ?Sized,
+    {
+        let json_value = serde_json::to_value(value)
+            .map_err(|e| anyhow!("Failed to serialize value to JSON: {e}"))?;
+        self.validate_or_first_error(&json_value)?;
+        serde_json::to_vec(&json_value).map_err(|e| anyhow!("Failed to serialize: {e}"))
     }
 
-    fn decode(&self, bytes: &[u8]) -> Result<Value> {
+    fn decode<D>(&self, bytes: &[u8]) -> Result<D>
+    where
+        D: DeserializeOwned,
+    {
         let value: Value =
             serde_json::from_slice(bytes).map_err(|e| anyhow!("Failed to parse JSON: {e}"))?;
         self.validate_or_first_error(&value)?;
-        Ok(value)
+        serde_json::from_value(value).map_err(|e| anyhow!("Failed to deserialize: {e}"))
     }
 
     fn extract_field(&self, bytes: &[u8], location: &str) -> Result<String> {
@@ -144,7 +154,9 @@ mod tests {
     fn decode_valid_bytes() {
         let codec = make_codec(EVENT_SCHEMA, "application/json");
         let bytes = br#"{"event":"ping"}"#;
-        let value = codec.decode(bytes).expect("valid bytes should decode");
+        let value = codec
+            .decode::<Value>(bytes)
+            .expect("valid bytes should decode");
         assert_eq!(value, json!({"event": "ping"}));
     }
 
@@ -152,7 +164,7 @@ mod tests {
     fn decode_invalid_json() {
         let codec = make_codec(EVENT_SCHEMA, "application/json");
         let err = codec
-            .decode(b"not json")
+            .decode::<Value>(b"not json")
             .expect_err("invalid JSON should fail");
         assert!(
             format!("{err}").to_lowercase().contains("parse"),
@@ -164,7 +176,7 @@ mod tests {
     fn decode_schema_violation() {
         let codec = make_codec(EVENT_SCHEMA, "application/json");
         let err = codec
-            .decode(br#"{"event":"pong"}"#)
+            .decode::<Value>(br#"{"event":"pong"}"#)
             .expect_err("schema violation should fail");
         assert!(
             format!("{err}").to_lowercase().contains("validation"),
@@ -221,12 +233,12 @@ properties:
         let codec = make_codec(yaml_source, "application/vnd.yaml");
 
         let value = codec
-            .decode(br#"{"event":"ping"}"#)
+            .decode::<Value>(br#"{"event":"ping"}"#)
             .expect("YAML-backed codec should decode valid payload");
         assert_eq!(value, json!({"event": "ping"}));
 
         let err = codec
-            .decode(br#"{"event":"pong"}"#)
+            .decode::<Value>(br#"{"event":"pong"}"#)
             .expect_err("schema violation should fail");
         assert!(
             format!("{err}").to_lowercase().contains("validation"),
@@ -263,5 +275,45 @@ properties:
             .extract_field(bytes, "event")
             .expect("bare field name should work");
         assert_eq!(field, "ping");
+    }
+
+    #[derive(serde::Deserialize, serde::Serialize, PartialEq, Debug)]
+    struct PingEvent {
+        event: String,
+    }
+
+    #[test]
+    fn decode_into_typed_struct() {
+        let codec = make_codec(EVENT_SCHEMA, "application/json");
+        let decoded: PingEvent = codec
+            .decode(br#"{"event":"ping"}"#)
+            .expect("valid bytes should decode into typed struct");
+        assert_eq!(
+            decoded,
+            PingEvent {
+                event: "ping".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn encode_from_typed_struct() {
+        let codec = make_codec(EVENT_SCHEMA, "application/json");
+        let payload = PingEvent {
+            event: "ping".to_string(),
+        };
+        let bytes = codec.encode(&payload).expect("typed struct should encode");
+        assert_eq!(bytes, br#"{"event":"ping"}"#);
+    }
+
+    #[test]
+    fn typed_round_trip() {
+        let codec = make_codec(EVENT_SCHEMA, "application/json");
+        let original = PingEvent {
+            event: "ping".to_string(),
+        };
+        let bytes = codec.encode(&original).expect("encode should succeed");
+        let decoded: PingEvent = codec.decode(&bytes).expect("decode should succeed");
+        assert_eq!(decoded, original);
     }
 }
