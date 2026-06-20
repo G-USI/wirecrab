@@ -7,6 +7,7 @@
 //! It operates on [`kernel::document`] types from wirecrab-kernel crate.
 
 pub mod ast;
+pub mod extract;
 pub mod resolver;
 pub mod validation;
 pub use kernel::document::*;
@@ -14,6 +15,7 @@ use serde_json::Value;
 
 use kernel::prelude::*;
 
+use crate::extract::extract_document;
 use crate::resolver::{RefError, RefResolver};
 use crate::validation::validate;
 
@@ -29,22 +31,22 @@ pub enum SpecError {
     InvalidSchema(String),
     #[error("Document validation failed: {0}")]
     ValidationFailed(String),
+    #[error("Extraction failed: {0}")]
+    ExtractionFailed(String),
 }
 
-pub type SpecParseResult = Result<Value, SpecError>;
+pub type SpecParseResult = Result<Document, SpecError>;
 
 pub fn parse(path: String) -> SpecParseResult {
     let resolver = RefResolver::default();
 
-    // -- Parse root yaml file
     let root_value: Value = (*resolver.resolve_ref(&path, "#/")?.clone()).clone();
 
-    // -- Recursively resolve all $refs in document
+    validate(&root_value)?;
+
     let resolved_document: Value = resolver.resolve_recursive(&root_value, &path)?;
 
-    // -- Validate resolved document against AsyncAPI spec schema
-    validate(&resolved_document)?;
+    let document = extract_document(&resolved_document)?;
 
-    // -- Return resolved Value
-    Ok(resolved_document)
+    Ok(document)
 }
