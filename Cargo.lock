@@ -2597,6 +2597,7 @@ dependencies = [
  "async-trait",
  "serde_json",
  "tokio",
+ "wirecrab-contrib-codec-json",
  "wirecrab-kernel",
 ]
 
