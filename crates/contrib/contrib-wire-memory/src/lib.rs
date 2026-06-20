@@ -152,27 +152,17 @@ impl InMemoryBus {
     }
 
     /// Pop a message from a specific consumer's pubsub queue.
-    pub fn get_pubsub_message(
-        &self,
-        address: &str,
-        consumer_id: usize,
-    ) -> Option<IncomingMessage> {
-        self.pubsub_queues
-            .lock()
-            .ok()
-            .and_then(|mut queues| {
-                queues
-                    .get_mut(address)
-                    .and_then(|q| q.get_mut(consumer_id).and_then(|q| q.pop_front()))
-            })
+    pub fn get_pubsub_message(&self, address: &str, consumer_id: usize) -> Option<IncomingMessage> {
+        self.pubsub_queues.lock().ok().and_then(|mut queues| {
+            queues
+                .get_mut(address)
+                .and_then(|q| q.get_mut(consumer_id).and_then(|q| q.pop_front()))
+        })
     }
 
     /// Get or create the `AsyncNotify` for a WorkQueue address.
     pub fn get_work_notify(&self, address: &str) -> Arc<AsyncNotify> {
-        let mut notifies = self
-            .work_notifies
-            .lock()
-            .expect("work_notifies mutex poisoned");
+        let mut notifies = self.work_notifies.lock().unwrap_or_else(|e| e.into_inner());
         notifies
             .entry(address.to_string())
             .or_insert_with(|| Arc::new(AsyncNotify::new()))
@@ -188,17 +178,14 @@ impl InMemoryBus {
             let mut ids = self
                 .next_consumer_id
                 .lock()
-                .expect("next_consumer_id mutex poisoned");
+                .unwrap_or_else(|e| e.into_inner());
             let id = ids.entry(address.to_string()).or_insert(0);
             let current = *id;
             *id += 1;
             current
         };
         {
-            let mut queues = self
-                .pubsub_queues
-                .lock()
-                .expect("pubsub_queues mutex poisoned");
+            let mut queues = self.pubsub_queues.lock().unwrap_or_else(|e| e.into_inner());
             queues
                 .entry(address.to_string())
                 .or_default()
@@ -208,7 +195,7 @@ impl InMemoryBus {
             let mut notifies = self
                 .pubsub_notifies
                 .lock()
-                .expect("pubsub_notifies mutex poisoned");
+                .unwrap_or_else(|e| e.into_inner());
             let vec = notifies.entry(address.to_string()).or_default();
             while vec.len() <= consumer_id {
                 vec.push(Arc::new(AsyncNotify::new()));
@@ -503,7 +490,12 @@ mod tests {
 
         producer
             .send_batch(
-                &[make_msg(b"1"), make_msg(b"2"), make_msg(b"3"), make_msg(b"4")],
+                &[
+                    make_msg(b"1"),
+                    make_msg(b"2"),
+                    make_msg(b"3"),
+                    make_msg(b"4"),
+                ],
                 None,
             )
             .await

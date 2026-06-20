@@ -5,7 +5,7 @@
 //! performs validation on every [`encode`](Codec::encode) and
 //! [`decode`](Codec::decode) call.
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
 use wirecrab_kernel::codec::Codec;
 use wirecrab_kernel::document::Schema;

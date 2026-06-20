@@ -70,10 +70,7 @@ async fn pub_sub_pattern() {
             "decoded payload must match the original Ping message",
         );
 
-        assert!(
-            incoming.is_pending(),
-            "message must be Pending before ack",
-        );
+        assert!(incoming.is_pending(), "message must be Pending before ack",);
         incoming.ack();
         assert!(
             incoming.is_acknowledged(),
