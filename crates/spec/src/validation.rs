@@ -17,7 +17,7 @@ const ASYNCAPI_3_1_0_SCHEMA: &str = include_str!("../schemas/asyncapi-3.1.0.json
 /// - The document is missing `asyncapi` field
 /// - The `asyncapi` version is not supported
 /// - The document does not conform to the JSON schema
-pub fn validate(document: &Value) -> Result<(), SpecError> {
+pub fn validate_jsonschema(document: &Value) -> Result<(), SpecError> {
     let schema_str = match document.get("asyncapi").and_then(|v| v.as_str()) {
         Some("3.0.0") => ASYNCAPI_3_0_0_SCHEMA,
         Some("3.1.0") => ASYNCAPI_3_1_0_SCHEMA,
@@ -73,7 +73,7 @@ mod tests {
             }
         });
 
-        assert!(validate(&doc).is_ok());
+        assert!(validate_jsonschema(&doc).is_ok());
     }
 
     #[test]
@@ -85,7 +85,10 @@ mod tests {
             }
         });
 
-        assert!(matches!(validate(&doc), Err(SpecError::InvalidSpec(_))));
+        assert!(matches!(
+            validate_jsonschema(&doc),
+            Err(SpecError::InvalidSpec(_))
+        ));
     }
 
     #[test]
@@ -99,7 +102,7 @@ mod tests {
         });
 
         assert!(matches!(
-            validate(&doc),
+            validate_jsonschema(&doc),
             Err(SpecError::UnsupportedVersion(_))
         ));
     }
@@ -114,7 +117,7 @@ mod tests {
         });
 
         assert!(matches!(
-            validate(&doc),
+            validate_jsonschema(&doc),
             Err(SpecError::ValidationFailed(_))
         ));
     }
@@ -129,7 +132,7 @@ mod tests {
             }
         });
 
-        assert!(validate(&doc).is_ok());
+        assert!(validate_jsonschema(&doc).is_ok());
     }
 
     #[test]
@@ -142,7 +145,10 @@ mod tests {
             }
         });
 
-        assert!(matches!(validate(&doc), Err(SpecError::InvalidSpec(_))));
+        assert!(matches!(
+            validate_jsonschema(&doc),
+            Err(SpecError::InvalidSpec(_))
+        ));
     }
 
     #[test]
@@ -153,7 +159,7 @@ mod tests {
         });
 
         assert!(matches!(
-            validate(&doc),
+            validate_jsonschema(&doc),
             Err(SpecError::ValidationFailed(_))
         ));
     }
@@ -169,7 +175,7 @@ mod tests {
         });
 
         assert!(matches!(
-            validate(&doc),
+            validate_jsonschema(&doc),
             Err(SpecError::ValidationFailed(_))
         ));
     }
@@ -185,7 +191,7 @@ mod tests {
         });
 
         assert!(matches!(
-            validate(&doc),
+            validate_jsonschema(&doc),
             Err(SpecError::ValidationFailed(_))
         ));
     }
@@ -206,7 +212,7 @@ mod tests {
             }
         });
 
-        assert!(validate(&doc).is_ok());
+        assert!(validate_jsonschema(&doc).is_ok());
     }
 
     #[test]
@@ -242,7 +248,7 @@ mod tests {
             }
         });
 
-        assert!(validate(&doc).is_ok());
+        assert!(validate_jsonschema(&doc).is_ok());
     }
 
     #[test]
@@ -256,7 +262,7 @@ mod tests {
             "x-custom-field": "custom value"
         });
 
-        assert!(validate(&doc).is_ok());
+        assert!(validate_jsonschema(&doc).is_ok());
     }
 
     #[test]
@@ -271,7 +277,7 @@ mod tests {
         });
 
         assert!(matches!(
-            validate(&doc),
+            validate_jsonschema(&doc),
             Err(SpecError::ValidationFailed(_))
         ));
     }
@@ -280,7 +286,10 @@ mod tests {
     fn validate_empty_document() {
         let doc = json!({});
 
-        assert!(matches!(validate(&doc), Err(SpecError::InvalidSpec(_))));
+        assert!(matches!(
+            validate_jsonschema(&doc),
+            Err(SpecError::InvalidSpec(_))
+        ));
     }
 
     #[test]
@@ -311,7 +320,7 @@ mod tests {
             }
         });
 
-        assert!(validate(&doc).is_ok());
+        assert!(validate_jsonschema(&doc).is_ok());
     }
 
     #[test]
@@ -337,6 +346,6 @@ mod tests {
             }
         });
 
-        assert!(validate(&doc).is_ok());
+        assert!(validate_jsonschema(&doc).is_ok());
     }
 }
