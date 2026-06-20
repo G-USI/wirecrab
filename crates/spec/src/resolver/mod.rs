@@ -128,16 +128,14 @@ impl RefResolver {
 
     pub fn resolve_ref(&self, current_file: &str, ref_str: &str) -> RefResult {
         let (location_str, address_str) = Self::parse_ref(ref_str, current_file)?;
-        let location = Self::resolve_location(location_str);
+        let location = Self::resolve_location(&location_str);
 
-        let address_str_for_parse = if address_str.starts_with('#') {
-            address_str.to_string()
+        let address = if address_str.starts_with('#') {
+            DocAddress::try_from(address_str.as_str())
         } else {
-            format!("#{}", address_str)
-        };
-
-        let address = DocAddress::try_from(address_str_for_parse.as_str())
-            .map_err(|e| RefError::Http(e.to_string()))?;
+            DocAddress::try_from(format!("#{}", address_str).as_str())
+        }
+        .map_err(|e| RefError::Http(e.to_string()))?;
 
         let doc_ref = DocumentRef {
             location: Shared::new(location),
@@ -175,7 +173,16 @@ impl RefResolver {
                     visited.insert(ref_key.clone());
                     let resolved = (*self.resolve_ref(current_file, ref_str)?.clone()).clone();
 
-                    self.resolve_recursive_with_stack(&resolved, current_file, visited)
+                    let (resolved_loc, _) = Self::parse_ref(ref_str, current_file)?;
+                    let next_file: &str = if resolved_loc.is_empty() {
+                        current_file
+                    } else {
+                        &resolved_loc
+                    };
+
+                    let result = self.resolve_recursive_with_stack(&resolved, next_file, visited);
+                    visited.remove(&ref_key);
+                    result
                 } else {
                     let mut new_map = serde_json::Map::new();
                     for (key, val) in map {
@@ -263,16 +270,25 @@ impl RefResolver {
         Ok(Shared::new(value))
     }
 
-    fn parse_ref<'a>(
-        ref_str: &'a str,
-        current_file: &'a str,
-    ) -> Result<(&'a str, &'a str), RefError> {
-        if let Some((loc, addr)) = ref_str.split_once('#') {
-            let location = if loc.is_empty() { current_file } else { loc };
-            Ok((location, addr))
+    fn parse_ref(ref_str: &str, current_file: &str) -> Result<(String, String), RefError> {
+        let (loc, addr) = ref_str
+            .split_once('#')
+            .ok_or_else(|| RefError::Http("Invalid ref format".to_string()))?;
+
+        let location = if loc.is_empty() {
+            current_file.to_string()
+        } else if Url::parse(loc).is_ok() && (loc.starts_with("http") || loc.starts_with("https"))
+            || std::path::Path::new(loc).is_absolute()
+        {
+            loc.to_string()
         } else {
-            Err(RefError::Http("Invalid ref format".to_string()))
-        }
+            let parent = std::path::Path::new(current_file)
+                .parent()
+                .unwrap_or(std::path::Path::new("."));
+            parent.join(loc).to_string_lossy().into_owned()
+        };
+
+        Ok((location, addr.to_string()))
     }
 
     fn resolve_location(location_str: &str) -> DocLocation {

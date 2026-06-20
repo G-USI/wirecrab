@@ -2,6 +2,12 @@ use super::*;
 use std::io::Write;
 use tempfile::NamedTempFile;
 
+fn create_test_yaml_in(dir: &std::path::Path, name: &str, content: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
 #[test]
 fn docaddress_valid_root() {
     let addr = DocAddress::try_from("#/").unwrap();
@@ -429,6 +435,81 @@ a/b:
 }
 
 #[test]
+fn refresolver_diamond_reference_resolves() {
+    let yaml = r#"
+channels:
+  userSignedup:
+    address: user/signedup
+    messages:
+      UserSignedUp:
+        $ref: '#/components/messages/UserSignedUp'
+operations:
+  sendUserSignedup:
+    action: send
+    channel:
+      $ref: '#/channels/userSignedup'
+    messages:
+      - $ref: '#/components/messages/UserSignedUp'
+components:
+  messages:
+    UserSignedUp:
+      payload:
+        type: object
+        properties:
+          email:
+            type: string
+"#;
+    let file = create_test_yaml(yaml);
+
+    let resolver = RefResolver::default();
+    let root = resolver
+        .resolve_ref(file.path().to_str().unwrap(), "#/")
+        .unwrap();
+    let root_value = root.as_ref().clone();
+
+    let result = resolver.resolve_recursive(&root_value, file.path().to_str().unwrap());
+
+    assert!(
+        result.is_ok(),
+        "diamond reference should not be flagged circular: {:?}",
+        result.err()
+    );
+
+    let resolved = result.unwrap();
+    let op_msg_payload = &resolved["operations"]["sendUserSignedup"]["messages"][0]["payload"];
+    assert_eq!(op_msg_payload["properties"]["email"]["type"], "string");
+    let chan_msg_payload =
+        &resolved["channels"]["userSignedup"]["messages"]["UserSignedUp"]["payload"];
+    assert_eq!(chan_msg_payload["properties"]["email"]["type"], "string");
+}
+
+#[test]
+fn refresolver_cycle_direct_self_reference_errors() {
+    let yaml = r#"
+components:
+  schemas:
+    Node:
+      type: object
+      properties:
+        parent:
+          $ref: '#/components/schemas/Node'
+"#;
+    let file = create_test_yaml(yaml);
+
+    let resolver = RefResolver::default();
+    let root = resolver
+        .resolve_ref(file.path().to_str().unwrap(), "#/")
+        .unwrap();
+    let root_value = root.as_ref().clone();
+
+    let result = resolver.resolve_recursive(&root_value, file.path().to_str().unwrap());
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("Circular reference detected"), "got: {err}");
+}
+
+#[test]
 fn refresolver_with_tilde_escaped_in_path() {
     let yaml = r#"
 a~b:
@@ -451,4 +532,80 @@ a~b:
     let doc = result.unwrap();
     let doc_value = doc.as_ref();
     assert_eq!(doc_value, &Value::String("object".to_string()));
+}
+
+#[test]
+fn refresolver_cross_file_relative_ref_from_different_cwd() {
+    let dir = tempfile::tempdir().unwrap();
+
+    create_test_yaml_in(
+        dir.path(),
+        "schemas.yaml",
+        r#"
+components:
+  schemas:
+    UserId:
+      type: string
+      format: uuid
+    User:
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/UserId'
+        email:
+          type: string
+      required: [id, email]
+"#,
+    );
+
+    create_test_yaml_in(
+        dir.path(),
+        "messages.yaml",
+        r#"
+components:
+  messages:
+    userSignedUp:
+      contentType: application/json
+      payload:
+        $ref: 'schemas.yaml#/components/schemas/User'
+"#,
+    );
+
+    let spec = create_test_yaml_in(
+        dir.path(),
+        "spec.yaml",
+        r#"
+asyncapi: 3.1.0
+info:
+  title: Cross-file Test
+  version: 1.0.0
+channels:
+  events:
+    address: events
+    messages:
+      userSignedUp:
+        $ref: 'messages.yaml#/components/messages/userSignedUp'
+"#,
+    );
+
+    let original_cwd = std::env::current_dir().unwrap();
+    std::env::set_current_dir("/tmp").unwrap();
+
+    let resolver = RefResolver::default();
+    let root = resolver.resolve_ref(spec.to_str().unwrap(), "#/").unwrap();
+    let root_value = root.as_ref().clone();
+    let result = resolver.resolve_recursive(&root_value, spec.to_str().unwrap());
+
+    std::env::set_current_dir(original_cwd).unwrap();
+
+    assert!(
+        result.is_ok(),
+        "cross-file relative refs should resolve from any CWD: {:?}",
+        result.err()
+    );
+
+    let resolved = result.unwrap();
+    let payload = &resolved["channels"]["events"]["messages"]["userSignedUp"]["payload"];
+    assert_eq!(payload["properties"]["email"]["type"], "string");
+    assert_eq!(payload["properties"]["id"]["format"], "uuid");
 }
