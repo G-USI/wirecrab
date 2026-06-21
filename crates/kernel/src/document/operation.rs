@@ -13,7 +13,7 @@ pub struct ReplyAddress {
 pub struct OperationReply {
     pub address: Option<ReplyAddress>,
     pub channel: Option<Channel>,
-    pub messages: Vec<Message>,
+    pub messages: Vec<Item<Message>>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,5 +27,4 @@ pub struct Operation {
     pub reply: Option<OperationReply>,
     pub tags: Vec<Tag>,
     pub external_docs: Option<ExternalDocs>,
-    pub key: String,
 }

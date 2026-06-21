@@ -1,5 +1,15 @@
 use crate::utils::structs::*;
 
+/// A keyed wrapper carrying an item alongside its original map key.
+///
+/// Replaces the old `BTreeMap<String, T>` + `T { key: String }` pattern:
+/// the key now lives on the `Item`, not duplicated inside the item.
+#[derive(Debug, Clone)]
+pub struct Item<T> {
+    pub key: String,
+    pub item: T,
+}
+
 #[derive(Debug, Clone)]
 pub struct Schema {
     pub format: String,

@@ -6,7 +6,6 @@ use crate::utils::structs::*;
 pub struct AddressParameter {
     pub description: Option<String>,
     pub location: String,
-    pub key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -15,9 +14,8 @@ pub struct Channel {
     pub title: Option<String>,
     pub summary: Option<String>,
     pub description: Option<String>,
-    pub messages: BTreeMap<String, Message>,
-    pub parameters: BTreeMap<String, AddressParameter>,
+    pub messages: Vec<Item<Message>>,
+    pub parameters: Vec<Item<AddressParameter>>,
     pub tags: Vec<Tag>,
     pub external_docs: Option<ExternalDocs>,
-    pub key: String,
 }

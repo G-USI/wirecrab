@@ -72,6 +72,7 @@ impl<C: Codec> Publisher<C> {
 mod tests {
     use super::*;
     use crate::document::channel::AddressParameter;
+    use crate::document::common::Item;
     use crate::wire::Lifecycle;
     use async_trait::async_trait;
     use serde::de::DeserializeOwned;
@@ -149,27 +150,25 @@ mod tests {
     }
 
     fn make_channel(address: Option<&str>, params: &[(&str, &str)]) -> Channel {
-        let mut parameters = BTreeMap::new();
+        let mut parameters = Vec::new();
         for (name, loc) in params {
-            parameters.insert(
-                s(name),
-                AddressParameter {
+            parameters.push(Item {
+                key: s(name),
+                item: AddressParameter {
                     description: None,
                     location: s(loc),
-                    key: s(name),
                 },
-            );
+            });
         }
         Channel {
             address: address.map(s),
             title: None,
             summary: None,
             description: None,
-            messages: BTreeMap::new(),
+            messages: Vec::new(),
             parameters,
             tags: Vec::new(),
             external_docs: None,
-            key: s("test-channel"),
         }
     }
 

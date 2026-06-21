@@ -1,3 +1,4 @@
+use crate::document::common::Item;
 use crate::utils::structs::*;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
@@ -40,12 +41,12 @@ pub trait Codec: Send + Sync {
 pub fn extract_parameters<C: Codec>(
     codec: &C,
     payload: &[u8],
-    parameters: &BTreeMap<String, crate::document::channel::AddressParameter>,
+    parameters: &[Item<crate::document::channel::AddressParameter>],
 ) -> Result<BTreeMap<String, String>, AnyhowError> {
     let mut result: BTreeMap<String, String> = BTreeMap::new();
-    for (name, param) in parameters {
-        let value = codec.extract_field(payload, &param.location)?;
-        result.insert(name.clone(), value);
+    for param in parameters {
+        let value = codec.extract_field(payload, &param.item.location)?;
+        result.insert(param.key.clone(), value);
     }
     Ok(result)
 }
@@ -83,6 +84,7 @@ mod tests {
     use crate::document::channel::AddressParameter;
     use serde::de::DeserializeOwned;
     use serde::ser::Serialize;
+    use std::vec;
 
     fn s(lit: &str) -> String {
         String::from(lit)
@@ -132,23 +134,22 @@ mod tests {
                 m
             },
         };
-        let mut params = BTreeMap::new();
-        params.insert(
-            s("user_id"),
-            AddressParameter {
-                description: None,
-                location: s("$message.payload#/user_id"),
+        let params: Vec<Item<AddressParameter>> = vec![
+            Item {
                 key: s("user_id"),
+                item: AddressParameter {
+                    description: None,
+                    location: s("$message.payload#/user_id"),
+                },
             },
-        );
-        params.insert(
-            s("org"),
-            AddressParameter {
-                description: None,
-                location: s("$message.payload#/org"),
+            Item {
                 key: s("org"),
+                item: AddressParameter {
+                    description: None,
+                    location: s("$message.payload#/org"),
+                },
             },
-        );
+        ];
 
         let out = extract_parameters(&codec, b"{}", &params).expect("extract ok");
         assert_eq!(out.get("user_id").map(String::as_str), Some("42"));

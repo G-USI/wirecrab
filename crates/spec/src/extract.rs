@@ -1,22 +1,30 @@
 use crate::SpecError;
 use kernel::document::{
-    Action, AddressParameter, Channel, CorrelationId, Document, ExternalDocs, Message, Operation,
-    OperationReply, ReplyAddress, Schema, Tag,
+    Action, AddressParameter, Channel, Components, CorrelationId, Document, ExternalDocs, Item,
+    Message, Operation, OperationReply, ReplyAddress, Schema, Tag,
 };
 use kernel::prelude::*;
 use serde_json::Value;
 
 pub fn extract_document(value: &Value) -> Result<Document, SpecError> {
-    let mut operations = BTreeMap::new();
+    let mut operations = Vec::new();
 
     if let Some(ops) = value.get("operations").and_then(|v| v.as_object()) {
         for (key, op_val) in ops {
             let op = extract_operation(key, op_val)?;
-            operations.insert(key.clone(), op);
+            operations.push(Item {
+                key: key.clone(),
+                item: op,
+            });
         }
     }
 
-    Ok(Document { operations })
+    let components = extract_components(value);
+
+    Ok(Document {
+        operations,
+        components,
+    })
 }
 
 fn extract_operation(key: &str, value: &Value) -> Result<Operation, SpecError> {
@@ -40,7 +48,7 @@ fn extract_operation(key: &str, value: &Value) -> Result<Operation, SpecError> {
         .ok_or_else(|| {
             SpecError::ExtractionFailed(format!("operation '{key}': missing 'channel' field"))
         })
-        .and_then(|v| extract_channel("", v))?;
+        .and_then(extract_channel)?;
 
     let messages = extract_message_list(value.get("messages"))?;
 
@@ -52,9 +60,8 @@ fn extract_operation(key: &str, value: &Value) -> Result<Operation, SpecError> {
 
     Ok(Operation {
         action,
-        key: key.to_string(),
         channel,
-        messages,
+        messages: messages.into_iter().map(|i| i.item).collect(),
         reply,
         title: get_str(value, "title"),
         summary: get_str(value, "summary"),
@@ -64,25 +71,30 @@ fn extract_operation(key: &str, value: &Value) -> Result<Operation, SpecError> {
     })
 }
 
-fn extract_channel(key: &str, value: &Value) -> Result<Channel, SpecError> {
-    let mut messages = BTreeMap::new();
+fn extract_channel(value: &Value) -> Result<Channel, SpecError> {
+    let mut messages = Vec::new();
     if let Some(msgs) = value.get("messages").and_then(|v| v.as_object()) {
         for (msg_key, msg_val) in msgs {
-            let msg = extract_message(msg_key, msg_val)?;
-            messages.insert(msg_key.clone(), msg);
+            let msg = extract_message(msg_val)?;
+            messages.push(Item {
+                key: msg_key.clone(),
+                item: msg,
+            });
         }
     }
 
-    let mut parameters = BTreeMap::new();
+    let mut parameters = Vec::new();
     if let Some(params) = value.get("parameters").and_then(|v| v.as_object()) {
         for (param_key, param_val) in params {
-            let param = extract_address_parameter(param_key, param_val)?;
-            parameters.insert(param_key.clone(), param);
+            let param = extract_address_parameter(param_val)?;
+            parameters.push(Item {
+                key: param_key.clone(),
+                item: param,
+            });
         }
     }
 
     Ok(Channel {
-        key: key.to_string(),
         address: get_str(value, "address"),
         title: get_str(value, "title"),
         summary: get_str(value, "summary"),
@@ -94,9 +106,8 @@ fn extract_channel(key: &str, value: &Value) -> Result<Channel, SpecError> {
     })
 }
 
-fn extract_message(key: &str, value: &Value) -> Result<Message, SpecError> {
+fn extract_message(value: &Value) -> Result<Message, SpecError> {
     Ok(Message {
-        key: key.to_string(),
         name: get_str(value, "name"),
         title: get_str(value, "title"),
         summary: get_str(value, "summary"),
@@ -117,19 +128,15 @@ fn extract_message(key: &str, value: &Value) -> Result<Message, SpecError> {
     })
 }
 
-fn extract_address_parameter(key: &str, value: &Value) -> Result<AddressParameter, SpecError> {
+fn extract_address_parameter(value: &Value) -> Result<AddressParameter, SpecError> {
     Ok(AddressParameter {
-        key: key.to_string(),
         location: get_str(value, "location").unwrap_or_default(),
         description: get_str(value, "description"),
     })
 }
 
 fn extract_operation_reply(value: &Value) -> Result<OperationReply, SpecError> {
-    let channel = value
-        .get("channel")
-        .map(|v| extract_channel("", v))
-        .transpose()?;
+    let channel = value.get("channel").map(extract_channel).transpose()?;
 
     let messages = extract_message_list(value.get("messages"))?;
 
@@ -152,11 +159,53 @@ fn extract_operation_reply(value: &Value) -> Result<OperationReply, SpecError> {
     })
 }
 
-fn extract_message_list(value: Option<&Value>) -> Result<Vec<Message>, SpecError> {
+fn extract_message_list(value: Option<&Value>) -> Result<Vec<Item<Message>>, SpecError> {
     match value {
-        Some(Value::Array(arr)) => arr.iter().map(|v| extract_message("", v)).collect(),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .map(|v| {
+                let msg = extract_message(v)?;
+                let key = msg.name.clone().unwrap_or_default();
+                Ok(Item { key, item: msg })
+            })
+            .collect(),
         _ => Ok(Vec::new()),
     }
+}
+
+fn extract_components(value: &Value) -> Option<Components> {
+    let comp = value.get("components")?;
+
+    let messages = comp
+        .get("messages")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| match extract_message(v) {
+                    Ok(msg) => Some(Item {
+                        key: k.clone(),
+                        item: msg,
+                    }),
+                    Err(_) => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let schemas = comp
+        .get("schemas")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| Item {
+                    key: k.clone(),
+                    item: extract_schema(v),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Some(Components { messages, schemas })
 }
 
 fn extract_schema(value: &Value) -> Schema {
@@ -227,12 +276,27 @@ mod tests {
         )
     }
 
+    fn op_by_key<'a>(document: &'a Document, key: &str) -> &'a Operation {
+        document
+            .operations
+            .iter()
+            .find(|i| i.key == key)
+            .map(|i| &i.item)
+            .unwrap_or_else(|| panic!("operation '{key}' must exist"))
+    }
+
+    fn msg_by_key<'a>(messages: &'a [Item<Message>], key: &str) -> &'a Message {
+        messages
+            .iter()
+            .find(|i| i.key == key)
+            .map(|i| &i.item)
+            .unwrap_or_else(|| panic!("message '{key}' must exist"))
+    }
+
     /// Regression baseline for the streetlights-kafka fixture.
     ///
-    /// Asserts the CURRENT IR shape: `Document { operations: BTreeMap<String, Operation> }`
-    /// with `Operation.key`, `Channel.key`, and `Message.key` fields populated.
-    /// These assertions WILL break after the planned IR refactor (T3) — that is expected,
-    /// T3 will update them to match the new shape.
+    /// Asserts the refactored IR shape: `Document { operations: Vec<Item<Operation>>,
+    /// components: Option<Components> }` with keys carried by `Item` wrappers.
     #[test]
     fn extract_streetlights_kafka() {
         let document = parse(fixture("streetlights-kafka-asyncapi.yml"))
@@ -240,24 +304,17 @@ mod tests {
 
         assert_eq!(document.operations.len(), 4);
 
-        assert!(document.operations.contains_key("receiveLightMeasurement"));
-        assert!(document.operations.contains_key("turnOn"));
-        assert!(document.operations.contains_key("turnOff"));
-        assert!(document.operations.contains_key("dimLight"));
+        let op_keys: Vec<&str> = document.operations.iter().map(|i| i.key.as_str()).collect();
+        assert!(op_keys.contains(&"receiveLightMeasurement"));
+        assert!(op_keys.contains(&"turnOn"));
+        assert!(op_keys.contains(&"turnOff"));
+        assert!(op_keys.contains(&"dimLight"));
 
-        let recv = document
-            .operations
-            .get("receiveLightMeasurement")
-            .expect("receiveLightMeasurement must exist");
-        let turn_on = document
-            .operations
-            .get("turnOn")
-            .expect("turnOn must exist");
+        let recv = op_by_key(&document, "receiveLightMeasurement");
+        let turn_on = op_by_key(&document, "turnOn");
 
         assert!(matches!(recv.action, Action::Receive));
-        assert_eq!(recv.key, "receiveLightMeasurement");
         assert!(matches!(turn_on.action, Action::Send));
-        assert_eq!(turn_on.key, "turnOn");
 
         assert_eq!(
             recv.channel.address.as_deref(),
@@ -268,13 +325,15 @@ mod tests {
             Some("smartylighting.streetlights.1.0.action.{streetlightId}.turn.on")
         );
 
-        let recv_msg = recv
+        let light_measured_item = recv
             .channel
             .messages
-            .get("lightMeasured")
-            .expect("channel.messages[\"lightMeasured\"] must exist after $ref resolution");
+            .iter()
+            .find(|i| i.key == "lightMeasured")
+            .expect("channel.messages must contain 'lightMeasured' after $ref resolution");
+        assert_eq!(light_measured_item.key, "lightMeasured");
 
-        assert_eq!(recv_msg.key, "lightMeasured");
+        let recv_msg = &light_measured_item.item;
         assert_eq!(recv_msg.name.as_deref(), Some("lightMeasured"));
         assert_eq!(recv_msg.title.as_deref(), Some("Light measured"));
         assert_eq!(recv_msg.content_type.as_deref(), Some("application/json"));
@@ -292,7 +351,6 @@ mod tests {
         );
 
         assert_eq!(recv.messages.len(), 1);
-        assert_eq!(recv.messages[0].key, "");
     }
 
     /// Regression baseline for the simple-asyncapi fixture.
@@ -302,22 +360,14 @@ mod tests {
             parse(fixture("simple-asyncapi.yml")).expect("simple-asyncapi fixture must parse");
 
         assert_eq!(document.operations.len(), 1);
-        let op = document
-            .operations
-            .get("sendUserSignedup")
-            .expect("sendUserSignedup must exist");
+        let op = op_by_key(&document, "sendUserSignedup");
 
         assert!(matches!(op.action, Action::Send));
-        assert_eq!(op.key, "sendUserSignedup");
 
         assert_eq!(op.channel.address.as_deref(), Some("user/signedup"));
 
         assert_eq!(op.channel.messages.len(), 1);
-        let msg = op
-            .channel
-            .messages
-            .get("UserSignedUp")
-            .expect("UserSignedUp message must exist");
+        let msg = msg_by_key(&op.channel.messages, "UserSignedUp");
 
         assert!(msg.payload.is_some(), "payload must be Some");
         let payload = msg.payload.as_ref().expect("payload is Some");
@@ -380,19 +430,19 @@ mod tests {
 
         assert!(!document.operations.is_empty());
         assert_eq!(document.operations.len(), 1);
+        assert!(
+            document.components.is_none(),
+            "no components section in input → None in output"
+        );
 
-        let op = document
-            .operations
-            .get("sayHello")
-            .expect("sayHello must exist");
+        let op = op_by_key(&document, "sayHello");
 
         assert!(matches!(op.action, Action::Send));
-        assert_eq!(op.key, "sayHello");
 
         assert_eq!(op.channel.address.as_deref(), Some("greet/hello"));
 
         assert_eq!(op.channel.messages.len(), 1);
-        assert!(op.channel.messages.contains_key("hello"));
+        assert!(op.channel.messages.iter().any(|i| i.key == "hello"));
 
         assert_eq!(op.messages.len(), 1);
         assert!(op.messages[0].payload.is_some());
@@ -400,6 +450,51 @@ mod tests {
             op.messages[0].content_type.as_deref(),
             Some("application/json")
         );
-        assert_eq!(op.channel.messages["hello"].key, "hello");
+
+        let hello_item = op
+            .channel
+            .messages
+            .iter()
+            .find(|i| i.key == "hello")
+            .expect("hello message must exist");
+        assert_eq!(hello_item.key, "hello");
+    }
+
+    /// Verifies that `components.messages` and `components.schemas` are extracted
+    /// into `Document.components` as `Vec<Item<...>>` keyed by their component name.
+    #[test]
+    fn extract_components_from_streetlights() {
+        let document = parse(fixture("streetlights-kafka-asyncapi.yml"))
+            .expect("streetlights-kafka fixture must parse");
+
+        let components = document
+            .components
+            .as_ref()
+            .expect("streetlights-kafka must have components");
+
+        assert!(
+            !components.messages.is_empty(),
+            "components.messages must be populated"
+        );
+        let msg_keys: Vec<&str> = components.messages.iter().map(|i| i.key.as_str()).collect();
+        assert!(
+            msg_keys.contains(&"lightMeasured"),
+            "components.messages must contain 'lightMeasured', got: {msg_keys:?}"
+        );
+
+        let light_measured = msg_by_key(&components.messages, "lightMeasured");
+        assert_eq!(light_measured.name.as_deref(), Some("lightMeasured"));
+        assert_eq!(light_measured.title.as_deref(), Some("Light measured"));
+        assert!(light_measured.payload.is_some());
+
+        assert!(
+            !components.schemas.is_empty(),
+            "components.schemas must be populated"
+        );
+        let schema_keys: Vec<&str> = components.schemas.iter().map(|i| i.key.as_str()).collect();
+        assert!(
+            schema_keys.contains(&"lightMeasuredPayload"),
+            "components.schemas must contain 'lightMeasuredPayload', got: {schema_keys:?}"
+        );
     }
 }

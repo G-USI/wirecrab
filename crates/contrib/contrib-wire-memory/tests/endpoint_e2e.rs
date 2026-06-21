@@ -17,7 +17,6 @@
 //! the only way the loop exits normally is when the wire reports an error on
 //! [`Receiver::receive`](wirecrab_kernel::wire::Receiver::receive).
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -27,6 +26,7 @@ use wirecrab_contrib_wire_memory::InMemoryWire;
 use wirecrab_kernel::application::Application;
 use wirecrab_kernel::document::Schema;
 use wirecrab_kernel::document::channel::Channel;
+use wirecrab_kernel::document::common::Item;
 use wirecrab_kernel::endpoint::handler::{HandlerError, MessageContext};
 use wirecrab_kernel::endpoint::publisher::Publisher;
 use wirecrab_kernel::endpoint::subscriber::Subscriber;
@@ -47,11 +47,10 @@ fn static_channel(address: &str) -> Channel {
         title: None,
         summary: None,
         description: None,
-        messages: BTreeMap::new(),
-        parameters: BTreeMap::new(),
+        messages: Vec::new(),
+        parameters: Vec::new(),
         tags: Vec::new(),
         external_docs: None,
-        key: "e2e-channel".to_string(),
     }
 }
 
@@ -240,25 +239,22 @@ async fn endpoint_e2e_parameterized_address() {
     let pub_codec = JsonCodec::new(&pub_schema).expect("pub codec compiles");
     let sub_codec = JsonCodec::new(&sub_schema).expect("sub codec compiles");
 
-    let mut params = BTreeMap::new();
-    params.insert(
-        "user_id".to_string(),
-        wirecrab_kernel::document::channel::AddressParameter {
+    let params = vec![Item {
+        key: "user_id".to_string(),
+        item: wirecrab_kernel::document::channel::AddressParameter {
             description: None,
             location: "$message.payload#/user_id".to_string(),
-            key: "user_id".to_string(),
         },
-    );
+    }];
     let pub_channel = Channel {
         address: Some("users/{user_id}".to_string()),
         title: None,
         summary: None,
         description: None,
-        messages: BTreeMap::new(),
+        messages: Vec::new(),
         parameters: params,
         tags: Vec::new(),
         external_docs: None,
-        key: "param-channel".to_string(),
     };
 
     let processed = Arc::new(AtomicUsize::new(0));

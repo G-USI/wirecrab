@@ -14,5 +14,4 @@ pub struct Message {
     pub correlation_id: Option<CorrelationId>,
     pub tags: Vec<Tag>,
     pub external_docs: Option<ExternalDocs>,
-    pub key: String,
 }
