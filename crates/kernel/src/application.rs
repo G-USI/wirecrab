@@ -38,6 +38,7 @@ use crate::endpoint::subscriber::Subscriber;
 use crate::future::BoxFuture;
 use crate::utils::structs::*;
 use futures_util::future::try_join_all;
+use serde::de::DeserializeOwned;
 
 /// Collects subscriber consume-loop futures and drives them concurrently.
 ///
@@ -69,13 +70,14 @@ impl Application {
     /// the consume loop.
     ///
     /// [`BoxFuture`]: crate::future::BoxFuture
-    pub async fn register_subscriber<C, H>(
+    pub async fn register_subscriber<C, H, T>(
         &mut self,
-        subscriber: Subscriber<C, H>,
+        subscriber: Subscriber<C, H, T>,
     ) -> Result<(), AnyhowError>
     where
         C: Codec + 'static,
-        H: Handler<serde_json::Value> + 'static,
+        T: DeserializeOwned + Send + 'static,
+        H: Handler<T> + 'static,
     {
         let fut = subscriber.start().await?;
         self.futures.push(fut);

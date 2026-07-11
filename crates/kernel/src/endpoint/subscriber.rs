@@ -20,23 +20,27 @@ use crate::endpoint::handler::{Handler, HandlerError, MessageContext};
 use crate::future::BoxFuture;
 use crate::utils::structs::*;
 use crate::wire::Receiver;
+use core::marker::PhantomData;
+use serde::de::DeserializeOwned;
 
 /// A subscriber endpoint that consumes messages from a wire, decodes them via
 /// a [`Codec`], and dispatches the decoded payload to a [`Handler`].
 ///
-/// `C` is the codec used to decode the raw `payload` bytes into a
-/// `serde_json::Value` (the MVP payload type). `H` is the handler that
-/// processes each decoded payload.
-pub struct Subscriber<C: Codec, H> {
+/// `C` is the codec used to decode the raw `payload` bytes. `H` is the handler
+/// that processes each decoded payload. `T` is the decoded payload type,
+/// defaulting to `serde_json::Value`.
+pub struct Subscriber<C: Codec, H, T = serde_json::Value> {
     codec: C,
     handler: H,
     receiver: Box<dyn Receiver>,
+    _phantom: PhantomData<T>,
 }
 
-impl<C, H> Subscriber<C, H>
+impl<C, H, T> Subscriber<C, H, T>
 where
     C: Codec + 'static,
-    H: Handler<serde_json::Value> + 'static,
+    T: DeserializeOwned + Send + 'static,
+    H: Handler<T> + 'static,
 {
     /// Create a new subscriber from its three components.
     pub fn new(codec: C, handler: H, receiver: Box<dyn Receiver>) -> Self {
@@ -44,6 +48,7 @@ where
             codec,
             handler,
             receiver,
+            _phantom: PhantomData,
         }
     }
 
@@ -58,7 +63,7 @@ where
     /// # Consume loop semantics
     ///
     /// For each received message:
-    /// 1. Decode the payload bytes via `codec.decode::<serde_json::Value>`.
+    /// 1. Decode the payload bytes via `codec.decode::<T>()`.
     ///    On decode failure → nack the message and continue.
     /// 2. Call `handler.handle(payload, ctx)`.
     /// 3. Ack/nack/reject based on the handler result:
@@ -77,7 +82,7 @@ where
 
         Ok(Box::pin(async move {
             while let Ok(mut msg) = receiver.receive().await {
-                let payload = match codec.decode::<serde_json::Value>(&msg.payload) {
+                let payload = match codec.decode::<T>(&msg.payload) {
                     Ok(v) => v,
                     Err(_) => {
                         // Undecodable payload: nack and keep looping.
