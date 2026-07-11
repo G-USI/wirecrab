@@ -134,9 +134,4 @@ impl IncomingMessage {
     pub fn is_pending(&self) -> bool {
         self.ack_state == AckState::Pending
     }
-
-    /// Returns the current acknowledgment state.
-    pub fn ack_state(&self) -> AckState {
-        self.ack_state
-    }
 }
