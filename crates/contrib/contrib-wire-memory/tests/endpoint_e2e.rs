@@ -7,8 +7,8 @@
 //! - [`InMemoryWire`] routes PubSub messages to registered consumer queues.
 //! - [`Subscriber`]'s consume loop decodes each message and dispatches to a
 //!   [`Handler`] closure.
-//! - [`Application`] collects the Subscriber's loop into a [`Runner`].
-//! - [`Runner`] drives the loop inside a `tokio` task spawned by the test.
+//! - [`Application`] collects the Subscriber's loop and drives it via
+//!   `try_join_all` inside a `tokio` task spawned by the test.
 //!
 //! # Error isolation (W13 fix)
 //!
@@ -110,10 +110,9 @@ async fn endpoint_e2e_happy_path() {
         .expect("register_subscriber ok");
     assert_eq!(app.len(), 1, "one subscriber future must be registered");
 
-    let runner = app.into_runner();
-    // Spawn the runner drive in a tokio task — the no-spawn pattern: the
-    // library returns the Runner, the caller provides the executor.
-    let _runner_handle = tokio::spawn(async move { runner.run().await });
+    // Spawn the application drive in a tokio task — the no-spawn pattern: the
+    // library returns the future, the caller provides the executor.
+    let _app_handle = tokio::spawn(async move { app.run().await });
 
     let payload = json!({"event": "ping"});
     publisher
@@ -183,8 +182,7 @@ async fn endpoint_e2e_error_isolation() {
         .await
         .expect("register_subscriber ok");
 
-    let runner = app.into_runner();
-    let _runner_handle = tokio::spawn(async move { runner.run().await });
+    let _app_handle = tokio::spawn(async move { app.run().await });
 
     let payload = json!({"event": "ping"});
     publisher
@@ -285,8 +283,7 @@ async fn endpoint_e2e_parameterized_address() {
         .await
         .expect("register_subscriber ok");
 
-    let runner = app.into_runner();
-    let _runner_handle = tokio::spawn(async move { runner.run().await });
+    let _app_handle = tokio::spawn(async move { app.run().await });
 
     let payload = json!({"user_id": "42", "event": "ping"});
     publisher

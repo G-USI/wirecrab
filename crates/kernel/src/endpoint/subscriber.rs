@@ -2,7 +2,8 @@
 //! dispatches the decoded payload to a [`Handler`].
 //!
 //! The loop is returned as a [`BoxFuture`] from [`Subscriber::start`]; the
-//! caller drives it (e.g. by pushing it into a [`crate::runner::Runner`]).
+//! caller drives it (e.g. by pushing it into an
+//! [`Application`](crate::application::Application)).
 //! The loop never spawns its own task — this is the no-spawn pattern.
 //!
 //! # Error isolation (W13 fix)
@@ -16,7 +17,7 @@
 
 use crate::codec::Codec;
 use crate::endpoint::handler::{Handler, HandlerError, MessageContext};
-use crate::runner::BoxFuture;
+use crate::future::BoxFuture;
 use crate::utils::structs::*;
 use crate::wire::Receiver;
 
@@ -51,7 +52,7 @@ where
     /// This consumes `self` so that the returned future can own the receiver,
     /// codec, and handler by move (the future must be `'static`).
     ///
-    /// Returns `Err` if [`Receiver::start`] fails; in that case the receiver
+    /// Returns `Err` if [`crate::wire::Lifecycle::start`] fails; in that case the receiver
     /// is dropped.
     ///
     /// # Consume loop semantics

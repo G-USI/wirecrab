@@ -1,4 +1,5 @@
-//! Application: collects endpoints into a [`Runner`].
+//! Application: collects subscriber consume-loop futures and drives them
+//! concurrently via `futures_util::try_join_all`.
 //!
 //! An [`Application`] is the top-level entry point for wiring up an AsyncAPI
 //! runtime without spawning. The intended usage sequence is:
@@ -9,18 +10,11 @@
 //!    self`).
 //! 3. Build [`Subscriber`]s from the receivers and call
 //!    [`Application::register_subscriber`] to push their consume-loop futures
-//!    into the inner [`Runner`].
-//! 4. Register the wires themselves via [`Application::register_wire`] so that
-//!    [`Application::stop`] can stop them. When a wire stops, its receivers'
-//!    `receive()` calls return `Err`, breaking the consume loops driven by the
-//!    [`Runner`].
-//! 5. Call [`Application::stop`] before consuming the application if graceful
-//!    shutdown is required (the wires are owned by the [`Application`] and
-//!    dropped when it is dropped — without `stop()` they will not get a chance
-//!    to release resources cleanly).
-//! 6. Call [`Application::into_runner`] to extract the [`Runner`] and `.await`
-//!    its [`Runner::run`] inside whatever executor was brought (tokio,
-//!    Embassy, …). Cancellation = drop the [`Runner`], or wrap `run()` in a
+//!    into the application.
+//! 4. Call [`Application::run`] to drive all registered futures concurrently.
+//!    `run` consumes `self` and `.await`s `try_join_all` over the collected
+//!    futures inside whatever executor was brought (tokio, Embassy, …).
+//!    Cancellation = drop the future returned by `run`, or wrap it in a
 //!    `select!` at the call site.
 //!
 //! The `Application` is **not** generic over codec / handler types:
@@ -32,41 +26,49 @@
 //! [`Publisher`](crate::endpoint::publisher::Publisher) endpoints do not have a
 //! background loop — they are held by the caller and used imperatively
 //! (`publisher.send(payload).await`). The `Application` therefore does not
-//! register publishers. The wire that owns a publisher's sender may still be
-//! registered via [`Application::register_wire`] for stop propagation.
+//! register publishers. The wire that owns a publisher's sender is managed
+//! (started / stopped) by the caller alongside the application.
+//!
+//! [`Subscriber::start`]: crate::endpoint::subscriber::Subscriber::start
+//! [`BoxFuture`]: crate::future::BoxFuture
 
 use crate::codec::Codec;
 use crate::endpoint::handler::Handler;
 use crate::endpoint::subscriber::Subscriber;
-use crate::runner::Runner;
+use crate::future::BoxFuture;
 use crate::utils::structs::*;
-use crate::wire::Lifecycle;
+use futures_util::future::try_join_all;
 
-/// Collects endpoints (currently: subscriber consume loops) into a [`Runner`],
-/// and tracks the wires that own their receivers so the caller can stop them.
+/// Collects subscriber consume-loop futures and drives them concurrently.
+///
+/// Holds a `Vec<BoxFuture>` returned by [`Subscriber::start`]. Call
+/// [`Application::run`] to drive them all via `try_join_all`.
 ///
 /// See the module docs for the intended usage sequence.
+///
+/// [`Subscriber::start`]: crate::endpoint::subscriber::Subscriber::start
 pub struct Application {
-    runner: Runner,
-    wires: Vec<Box<dyn Lifecycle>>,
+    futures: Vec<BoxFuture>,
 }
 
 impl Application {
     /// Create an empty `Application`.
     pub fn new() -> Self {
         Self {
-            runner: Runner::new(),
-            wires: Vec::new(),
+            futures: Vec::new(),
         }
     }
 
     /// Register a subscriber: call [`Subscriber::start`] (which starts the
     /// receiver and consumes the subscriber) and push the returned
-    /// consume-loop [`BoxFuture`] into the inner [`Runner`].
+    /// consume-loop [`BoxFuture`] into the application.
     ///
-    /// The wire that produced the subscriber's receiver should be registered
-    /// separately via [`Application::register_wire`] so that
-    /// [`Application::stop`] can break this consume loop.
+    /// The wire that produced the subscriber's receiver is managed (started /
+    /// stopped) by the caller alongside the application — stopping the wire
+    /// causes its receivers' `receive()` calls to return `Err`, which breaks
+    /// the consume loop.
+    ///
+    /// [`BoxFuture`]: crate::future::BoxFuture
     pub async fn register_subscriber<C, H>(
         &mut self,
         subscriber: Subscriber<C, H>,
@@ -76,62 +78,32 @@ impl Application {
         H: Handler<serde_json::Value> + 'static,
     {
         let fut = subscriber.start().await?;
-        self.runner.push(fut);
+        self.futures.push(fut);
         Ok(())
     }
 
-    /// Register a wire for stop() propagation.
-    ///
-    /// When [`Application::stop`] is called, every registered wire's
-    /// [`Lifecycle::stop`] is invoked. For wire implementations whose
-    /// receivers return `Err` after stop (e.g. a stopped in-memory broker),
-    /// this is what breaks the subscriber consume loops driven by the
-    /// [`Runner`].
-    ///
-    /// Takes ownership of `wire`. Callers are expected to pull senders and
-    /// receivers out of the wire (`new_sender` / `new_receiver` take `&mut
-    /// self`) **before** moving the wire into the `Application`. The returned
-    /// `Box<dyn Sender>` / `Box<dyn Receiver>` are owned and do not borrow from
-    /// the wire, so they outlive the wire's move into `Application`.
-    pub fn register_wire<W: Lifecycle + 'static>(&mut self, wire: W) {
-        self.wires.push(Box::new(wire));
-    }
-
-    /// Stop every registered wire by calling its [`Lifecycle::stop`].
-    ///
-    /// Returns the first error encountered; on error, remaining wires may not
-    /// be stopped.
-    ///
-    /// This must be called **before** [`Application::into_runner`] — once the
-    /// runner is extracted, the wires (still owned by the `Application` that
-    /// was consumed) are no longer reachable for explicit stop.
-    pub async fn stop(&mut self) -> Result<(), AnyhowError> {
-        for wire in &mut self.wires {
-            wire.stop().await?;
-        }
-        Ok(())
-    }
-
-    /// Number of background futures currently held by the inner [`Runner`].
+    /// Number of background futures currently held.
     pub fn len(&self) -> usize {
-        self.runner.len()
+        self.futures.len()
     }
 
     /// Returns `true` if no futures have been registered.
     pub fn is_empty(&self) -> bool {
-        self.runner.is_empty()
+        self.futures.is_empty()
     }
 
-    /// Consume the `Application` and return the [`Runner`] that drives all
-    /// registered background futures.
+    /// Consume the `Application` and drive all registered futures concurrently
+    /// via `try_join_all`.
     ///
-    /// Call this once at startup and `.await` [`Runner::run`] inside the host
-    /// executor. The wires registered via [`Application::register_wire`] stay
-    /// owned by the `Application` and are dropped when `self` is consumed
-    /// (their [`Lifecycle::stop`] is **not** invoked automatically — call
-    /// [`Application::stop`] first for graceful shutdown).
-    pub fn into_runner(self) -> Runner {
-        self.runner
+    /// Returns `Ok(())` when every future completes successfully, or the first
+    /// error encountered (remaining futures are dropped, i.e. cancelled).
+    ///
+    /// The returned future is `Send` (suitable for `tokio::spawn(app.run())`).
+    /// Cancellation = drop the returned future, or wrap it in a `select!` at
+    /// the call site.
+    pub async fn run(self) -> Result<(), AnyhowError> {
+        try_join_all(self.futures).await?;
+        Ok(())
     }
 }
 
@@ -145,10 +117,11 @@ impl Default for Application {
 mod tests {
     use super::*;
     use crate::endpoint::handler::{HandlerError, MessageContext};
-    use crate::wire::{IncomingMessage, Receiver, WireMessage};
+    use crate::wire::{IncomingMessage, Lifecycle, Receiver, WireMessage};
     use std::collections::VecDeque;
     use std::format;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     /// Pass-through JSON codec used to round-trip `serde_json::Value` payloads.
@@ -231,35 +204,6 @@ mod tests {
         }
     }
 
-    /// Mock wire that records whether `stop()` was called.
-    struct StopTrackingWire {
-        stopped: Arc<AtomicBool>,
-    }
-
-    #[async_trait]
-    impl Lifecycle for StopTrackingWire {
-        async fn start(&mut self) -> Result<(), AnyhowError> {
-            Ok(())
-        }
-        async fn stop(&mut self) -> Result<(), AnyhowError> {
-            self.stopped.store(true, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    /// A wire whose `stop()` always returns `Err`.
-    struct FailingWire;
-
-    #[async_trait]
-    impl Lifecycle for FailingWire {
-        async fn start(&mut self) -> Result<(), AnyhowError> {
-            Ok(())
-        }
-        async fn stop(&mut self) -> Result<(), AnyhowError> {
-            Err(anyhow::anyhow!("wire refused to stop"))
-        }
-    }
-
     #[test]
     fn empty_application() {
         let app = Application::new();
@@ -274,7 +218,7 @@ mod tests {
         assert_eq!(app.len(), 0);
     }
 
-    /// After registering a subscriber, the inner `Runner` must be non-empty.
+    /// After registering a subscriber, the application must be non-empty.
     #[tokio::test]
     async fn register_subscriber_adds_future() {
         let mut app = Application::new();
@@ -291,11 +235,11 @@ mod tests {
             .await
             .expect("register ok");
 
-        assert!(!app.is_empty(), "runner must be non-empty after register");
+        assert!(!app.is_empty(), "app must be non-empty after register");
         assert_eq!(app.len(), 1);
     }
 
-    /// Multiple subscribers accumulate one future each in the inner `Runner`.
+    /// Multiple subscribers accumulate one future each.
     #[tokio::test]
     async fn register_multiple_subscribers_accumulates_futures() {
         let mut app = Application::new();
@@ -315,10 +259,9 @@ mod tests {
         assert_eq!(app.len(), 3, "three subscribers → three futures");
     }
 
-    /// `into_runner` consumes the application and returns a `Runner` that
-    /// actually drives the registered futures to completion.
+    /// `Application::run` drives all registered futures via `try_join_all`.
     #[tokio::test]
-    async fn into_runner_drives_registered_future() {
+    async fn run_drives_registered_futures() {
         let mut app = Application::new();
 
         let processed = Arc::new(AtomicUsize::new(0));
@@ -342,78 +285,12 @@ mod tests {
             .await
             .expect("register ok");
 
-        let runner = app.into_runner();
-        assert_eq!(runner.len(), 1);
-        runner.run().await.expect("runner completes cleanly");
+        app.run().await.expect("run completes cleanly");
 
         assert_eq!(
             processed.load(Ordering::SeqCst),
             3,
             "all three messages should reach the handler"
-        );
-    }
-
-    /// `stop()` with no wires registered returns `Ok` (no-op).
-    #[tokio::test]
-    async fn stop_with_no_wires_returns_ok() {
-        let mut app = Application::new();
-        app.stop().await.expect("stop on empty app is no-op");
-    }
-
-    /// `stop()` invokes `Lifecycle::stop` on each registered wire.
-    #[tokio::test]
-    async fn stop_calls_registered_wire_stop() {
-        let mut app = Application::new();
-        let stopped = Arc::new(AtomicBool::new(false));
-        app.register_wire(StopTrackingWire {
-            stopped: stopped.clone(),
-        });
-
-        assert!(!stopped.load(Ordering::SeqCst), "wire not yet stopped");
-
-        app.stop().await.expect("stop ok");
-
-        assert!(
-            stopped.load(Ordering::SeqCst),
-            "wire.stop() must be invoked by app.stop()"
-        );
-    }
-
-    /// `stop()` stops every registered wire, not just the first.
-    #[tokio::test]
-    async fn stop_calls_all_registered_wires() {
-        let mut app = Application::new();
-        let s1 = Arc::new(AtomicBool::new(false));
-        let s2 = Arc::new(AtomicBool::new(false));
-        let s3 = Arc::new(AtomicBool::new(false));
-        app.register_wire(StopTrackingWire {
-            stopped: s1.clone(),
-        });
-        app.register_wire(StopTrackingWire {
-            stopped: s2.clone(),
-        });
-        app.register_wire(StopTrackingWire {
-            stopped: s3.clone(),
-        });
-
-        app.stop().await.expect("stop ok");
-
-        assert!(s1.load(Ordering::SeqCst), "wire 1 must be stopped");
-        assert!(s2.load(Ordering::SeqCst), "wire 2 must be stopped");
-        assert!(s3.load(Ordering::SeqCst), "wire 3 must be stopped");
-    }
-
-    /// `stop()` propagates the first wire error and short-circuits.
-    #[tokio::test]
-    async fn stop_propagates_error() {
-        let mut app = Application::new();
-        app.register_wire(FailingWire);
-
-        let err = app.stop().await.expect_err("stop should fail");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("wire refused to stop"),
-            "unexpected error message: {msg}"
         );
     }
 
@@ -424,5 +301,35 @@ mod tests {
     fn application_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Application>();
+    }
+
+    /// The future returned by `run()` must be `Send` so that callers can
+    /// `tokio::spawn(app.run())`. Compile-time check only — never run.
+    #[test]
+    fn run_future_is_send() {
+        fn assert_send_future<F: Future + Send>(_f: F) {}
+        let app = Application::new();
+        assert_send_future(app.run());
+    }
+
+    /// `try_join_all` short-circuits on the first `Err`: pushing one `Ok`
+    /// future and one `Err` future must cause `run().await` to return `Err`.
+    ///
+    /// This exercises the fail-fast cancellation path of `try_join_all`. The
+    /// current subscriber consume loops never return `Err` (they map all
+    /// `receive()` errors to `Ok(())`), so this test keeps the short-circuit
+    /// path live-tested for forward compatibility.
+    #[tokio::test]
+    async fn try_join_all_cancels_on_error() {
+        let mut app = Application::new();
+        app.futures.push(Box::pin(async { Ok(()) }));
+        app.futures
+            .push(Box::pin(async { Err(anyhow::anyhow!("future exploded")) }));
+
+        let err = app.run().await.expect_err("run should fail");
+        assert!(
+            format!("{err}").contains("future exploded"),
+            "expected error message, got: {err}"
+        );
     }
 }

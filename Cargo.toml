@@ -27,6 +27,7 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
 [workspace.dependencies]
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 async-trait = "0.1"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1.0", default-features = false }
