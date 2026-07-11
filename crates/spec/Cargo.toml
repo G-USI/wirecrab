@@ -19,7 +19,6 @@ anyhow = { workspace = true }
 ureq = "2.9"
 url = { workspace = true }
 jsonschema = { workspace = true }
-inventory = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

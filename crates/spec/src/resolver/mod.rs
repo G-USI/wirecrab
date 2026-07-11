@@ -7,16 +7,6 @@ use thiserror::Error;
 use url::Url;
 
 #[derive(Debug, Error)]
-#[error("Invalid JSON Pointer")]
-pub struct DocAddressParseError;
-
-impl From<DocAddressParseError> for RefError {
-    fn from(_: DocAddressParseError) -> Self {
-        RefError::Http("Invalid JSON Pointer".to_string())
-    }
-}
-
-#[derive(Debug, Error)]
 pub enum RefError {
     #[error("Failed to read file: {0}")]
     Io(#[from] std::io::Error),
@@ -37,28 +27,14 @@ pub enum DocLocation {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DocAddress(Vec<String>);
 
-pub struct DocAddressIter<'a> {
-    inner: std::slice::Iter<'a, String>,
-}
-
-impl<'a> Iterator for DocAddressIter<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|s| s.as_str())
-    }
-}
-
 impl DocAddress {
-    pub fn iter(&self) -> DocAddressIter<'_> {
-        DocAddressIter {
-            inner: self.0.iter(),
-        }
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|s| s.as_str())
     }
 
-    fn parse(value: &str) -> Result<Self, DocAddressParseError> {
+    fn parse(value: &str) -> Result<Self, RefError> {
         if !value.starts_with("#/") {
-            return Err(DocAddressParseError);
+            return Err(RefError::Http("Invalid JSON Pointer".to_string()));
         }
 
         let parts: Vec<String> = value
@@ -70,10 +46,10 @@ impl DocAddress {
                     if index == 0 {
                         return Ok(None);
                     }
-                    return Err(DocAddressParseError);
+                    return Err(RefError::Http("Invalid JSON Pointer".to_string()));
                 }
                 if part.contains('~') && !part.contains("~0") && !part.contains("~1") {
-                    return Err(DocAddressParseError);
+                    return Err(RefError::Http("Invalid JSON Pointer".to_string()));
                 }
                 Ok(Some(part.replace("~1", "/").replace("~0", "~")))
             })
@@ -87,7 +63,7 @@ impl DocAddress {
 }
 
 impl TryFrom<&str> for DocAddress {
-    type Error = DocAddressParseError;
+    type Error = RefError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         Self::parse(value)
@@ -134,8 +110,7 @@ impl RefResolver {
             DocAddress::try_from(address_str.as_str())
         } else {
             DocAddress::try_from(format!("#{}", address_str).as_str())
-        }
-        .map_err(|e| RefError::Http(e.to_string()))?;
+        }?;
 
         let doc_ref = DocumentRef {
             location: Shared::new(location),

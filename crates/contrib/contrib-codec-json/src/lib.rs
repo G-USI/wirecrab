@@ -54,9 +54,10 @@ impl JsonCodec {
         if self.validator.is_valid(value) {
             return Ok(());
         }
-        let errors: Vec<_> = self.validator.iter_errors(value).collect();
-        let first = errors
-            .first()
+        let first = self
+            .validator
+            .iter_errors(value)
+            .next()
             .map(|e| format!("- {e} (instance path: {})", e.instance_path()))
             .unwrap_or_else(|| "unknown validation error".to_string());
         bail!("Schema validation failed: {first}");

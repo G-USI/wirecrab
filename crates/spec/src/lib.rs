@@ -6,7 +6,6 @@
 //! This crate provides parsing and validation of AsyncAPI 3.0/3.1 specifications.
 //! It operates on [`kernel::document`] types from wirecrab-kernel crate.
 
-pub mod ast;
 pub mod extract;
 pub mod resolver;
 pub mod rules;
@@ -44,30 +43,21 @@ pub type SpecParseResult = Result<Document, SpecError>;
 pub fn parse(path: String) -> SpecParseResult {
     let resolver = RefResolver::default();
 
-    let root_value: Value = (*resolver.resolve_ref(&path, "#/")?.clone()).clone();
+    let shared = resolver.resolve_ref(&path, "#/")?;
+    let root_value: Value = (*shared).clone();
 
     validate_jsonschema(&root_value)?;
 
     let resolved_document: Value = resolver.resolve_recursive(&root_value, &path)?;
 
     let rule_issues = validate_rules(&resolved_document);
-    if rule_issues
-        .iter()
-        .any(|i| i.severity == rules::Severity::Error)
-    {
+    if !rule_issues.is_empty() {
         let formatted = rule_issues
             .iter()
-            .filter(|i| i.severity == rules::Severity::Error)
             .map(|i| format!("  - {} at {}", i.message, i.path))
             .collect::<Vec<_>>()
             .join("\n");
-        return Err(SpecError::RulesFailed(
-            rule_issues
-                .iter()
-                .filter(|i| i.severity == rules::Severity::Error)
-                .count(),
-            formatted,
-        ));
+        return Err(SpecError::RulesFailed(rule_issues.len(), formatted));
     }
 
     let document = extract_document(&resolved_document)?;

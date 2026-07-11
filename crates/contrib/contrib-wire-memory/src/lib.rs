@@ -348,7 +348,6 @@ impl Receiver for InMemoryConsumer {
 /// hands out clones of that `Arc` to every producer and consumer it creates.
 pub struct InMemoryWire {
     bus: Arc<InMemoryBus>,
-    started: bool,
 }
 
 impl InMemoryWire {
@@ -356,7 +355,6 @@ impl InMemoryWire {
     pub fn new() -> Self {
         Self {
             bus: Arc::new(InMemoryBus::new()),
-            started: false,
         }
     }
 
@@ -375,11 +373,9 @@ impl Default for InMemoryWire {
 #[async_trait]
 impl Lifecycle for InMemoryWire {
     async fn start(&mut self) -> Result<(), AnyhowError> {
-        self.started = true;
         Ok(())
     }
     async fn stop(&mut self) -> Result<(), AnyhowError> {
-        self.started = false;
         Ok(())
     }
 }
