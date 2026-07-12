@@ -148,8 +148,8 @@ components:
         manager:
           $ref: '#/components/schemas/User'
 "#;
-    let file_path = "circular-test.yaml";
-    std::fs::write(file_path, yaml_content).unwrap();
+    let file = create_test_yaml(yaml_content);
+    let file_path = file.path().to_str().unwrap();
 
     // Get the root document first
     let root_doc = resolver.resolve_ref(file_path, "#/").unwrap();
@@ -157,9 +157,6 @@ components:
 
     // Then try to resolve recursively (this should detect circular dependency)
     let result = resolver.resolve_recursive(&root_value, file_path);
-
-    // Clean up
-    std::fs::remove_file(file_path).ok();
 
     assert!(result.is_err());
     let error = result.unwrap_err();

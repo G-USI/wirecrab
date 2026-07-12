@@ -7,7 +7,7 @@
 //! It operates on [`kernel::document`] types from wirecrab-kernel crate.
 
 pub mod extract;
-pub mod resolver;
+pub mod ref_resolver;
 pub mod rules;
 pub mod validation;
 pub use kernel::document::*;
@@ -16,7 +16,7 @@ use serde_json::Value;
 use kernel::prelude::*;
 
 use crate::extract::extract_document;
-use crate::resolver::{RefError, RefResolver};
+use crate::ref_resolver::{RefError, RefResolver};
 use crate::rules::validate_rules;
 use crate::validation::validate_jsonschema;
 
