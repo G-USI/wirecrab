@@ -2592,6 +2592,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wirecrab-example-ping"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "wirecrab-contrib-codec-json",
+ "wirecrab-contrib-wire-memory",
+ "wirecrab-kernel",
+ "wirecrab-macros",
+]
+
+[[package]]
 name = "wirecrab-kernel"
 version = "0.1.0"
 dependencies = [
@@ -2610,6 +2623,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "serde_json",
  "syn",
  "wirecrab-spec",
 ]

@@ -1,0 +1,32 @@
+asyncapi: "3.0.0"
+info:
+  title: Ping Example
+  version: "1.0.0"
+
+channels:
+  ping_pubsub:
+    address: /ping/pubsub
+    messages:
+      Ping:
+        contentType: application/json
+        payload:
+          type: object
+          properties:
+            event:
+              type: string
+              const: ping
+            count:
+              type: integer
+          required:
+            - event
+
+operations:
+  send_ping:
+    action: send
+    channel:
+      $ref: "#/channels/ping_pubsub"
+
+  receive_ping:
+    action: receive
+    channel:
+      $ref: "#/channels/ping_pubsub"
