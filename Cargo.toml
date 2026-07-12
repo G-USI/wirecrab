@@ -9,6 +9,7 @@ members = [
     "crates/contrib/contrib-wire-memory",
     "crates/contrib/contrib-codec-json",
     "examples/ping",
+    "examples/chat",
 ]
 
 [workspace.package]

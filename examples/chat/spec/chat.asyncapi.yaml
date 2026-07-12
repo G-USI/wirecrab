@@ -1,0 +1,94 @@
+asyncapi: "3.0.0"
+info:
+  title: Chat Example
+  version: "1.0.0"
+
+channels:
+  user_events:
+    address: /chat/events
+    messages:
+      UserJoined:
+        contentType: application/json
+        payload:
+          type: object
+          properties:
+            user_id:
+              type: string
+              format: uuid
+            username:
+              type: string
+              minLength: 3
+              maxLength: 32
+            role:
+              type: string
+              enum: [guest, member, admin]
+              default: guest
+            joined_at:
+              type: string
+              format: date-time
+          required:
+            - user_id
+            - username
+            - joined_at
+      UserLeft:
+        contentType: application/json
+        payload:
+          type: object
+          properties:
+            user_id:
+              type: string
+              format: uuid
+            reason:
+              type: string
+              enum: [normal, timeout, kicked]
+              default: normal
+          required:
+            - user_id
+
+  message_out:
+    address: /chat/messages
+    messages:
+      ChatMessage:
+        contentType: application/json
+        payload:
+          type: object
+          properties:
+            from:
+              type: string
+              format: uuid
+            to:
+              type: string
+              format: uuid
+            text:
+              type: string
+            mentions:
+              type: array
+              items:
+                type: string
+            metadata:
+              type: object
+              additionalProperties: true
+          required:
+            - from
+            - text
+
+operations:
+  publish_user_event:
+    action: send
+    channel:
+      $ref: "#/channels/user_events"
+
+  consume_user_event:
+    action: receive
+    channel:
+      $ref: "#/channels/user_events"
+
+  publish_chat_message:
+    action: send
+    channel:
+      $ref: "#/channels/message_out"
+
+  consume_chat_message:
+    action: receive
+    channel:
+      $ref: "#/channels/message_out"

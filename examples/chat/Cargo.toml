@@ -1,0 +1,17 @@
+[package]
+name = "wirecrab-example-chat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+wirecrab-macros = { workspace = true }
+wirecrab-kernel = { workspace = true }
+wirecrab-contrib-codec-json = { workspace = true }
+wirecrab-contrib-wire-memory = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
