@@ -48,9 +48,9 @@ pub fn parse(path: String) -> SpecParseResult {
 
     validate_jsonschema(&root_value)?;
 
-    let resolved_document: Value = resolver.resolve_recursive(&root_value, &path)?;
+    let resolved_document = resolver.resolve_recursive(&root_value, &path)?;
 
-    let rule_issues = validate_rules(&resolved_document);
+    let rule_issues = validate_rules(&resolved_document.value);
     if !rule_issues.is_empty() {
         let formatted = rule_issues
             .iter()

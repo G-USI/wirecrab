@@ -1,3 +1,4 @@
+use crate::ref_resolver::ResolvedDocument;
 use crate::SpecError;
 use kernel::document::{
     Action, AddressParameter, Channel, Components, CorrelationId, Document, ExternalDocs, Item,
@@ -5,8 +6,19 @@ use kernel::document::{
 };
 use kernel::prelude::*;
 use serde_json::Value;
+use std::collections::HashMap;
 
-pub fn extract_document(value: &Value) -> Result<Document, SpecError> {
+/// Extract a codegen-ready `Document` IR from a resolved AsyncAPI spec.
+///
+/// The returned `Document` carries:
+/// - `operations`: as resolved from the spec
+/// - `messages`: deduplicated by name + payload structure; collisions
+///   (same name, different payload) produce `SpecError::ExtractionFailed`
+/// - `schemas`: every `components/schemas/*` entry (escape hatch; the
+///   macros/CLI layer decides which are actually referenced)
+/// - `components`: raw components section for escape-hatch access
+pub fn extract_document(resolved: &ResolvedDocument) -> Result<Document, SpecError> {
+    let value = &resolved.value;
     let mut operations = Vec::new();
 
     if let Some(ops) = value.get("operations").and_then(|v| v.as_object()) {
@@ -21,10 +33,133 @@ pub fn extract_document(value: &Value) -> Result<Document, SpecError> {
 
     let components = extract_components(value);
 
+    // Build the deduplicated message list. Walk operations + their channels,
+    // collect messages, dedupe by (name, payload.source). If two messages
+    // share a name but have different payloads, that's a collision — error.
+    let messages = collect_unique_messages(&operations)?;
+
+    // Pull every named schema from components/schemas/* verbatim.
+    let schemas: Vec<Item<Schema>> = components
+        .as_ref()
+        .map(|c| c.schemas.clone())
+        .unwrap_or_default();
+
     Ok(Document {
         operations,
+        messages,
+        schemas,
         components,
     })
+}
+
+/// Walk operations and their channels, deduplicating messages.
+///
+/// Naming precedence (spec-extract policy):
+///   1. `message.name` if set
+///   2. `message.title` if set
+///   3. The containing key (channel key, or component key)
+///
+/// Dedup policy:
+/// - Messages that resolve to a canonical name: dedupe by name. Two
+///   messages sharing a name MUST have the same payload source, else
+///   this is an ambiguous spec and we error.
+/// - Messages that don't resolve (no name, no title, no key, e.g. an
+///   unnamed entry in an operation's `messages` array): always included
+///   verbatim. No dedup, no collision check. Their `Item.key` is
+///   synthesized as `<op>#<index>`.
+fn collect_unique_messages(operations: &[Item<Operation>]) -> Result<Vec<Item<Message>>, SpecError> {
+    let mut result: Vec<Item<Message>> = Vec::new();
+    let mut named_index: HashMap<String, usize> = HashMap::new();
+    let mut anon_counter: usize = 0;
+
+    for op in operations {
+        // Operation-level messages: list, no key
+        for msg in &op.item.messages {
+            let name = canonical_name(msg, None);
+            register_message(
+                msg,
+                name,
+                &op.key,
+                &mut result,
+                &mut named_index,
+                &mut anon_counter,
+            )?;
+        }
+        // Channel-level messages: keyed map
+        for item in &op.item.channel.messages {
+            let name = canonical_name(&item.item, Some(&item.key));
+            register_message(
+                &item.item,
+                name,
+                &op.key,
+                &mut result,
+                &mut named_index,
+                &mut anon_counter,
+            )?;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Resolve the canonical name for a message per the precedence policy.
+fn canonical_name(msg: &Message, fallback_key: Option<&str>) -> Option<String> {
+    msg.name
+        .clone()
+        .or_else(|| msg.title.clone())
+        .or_else(|| fallback_key.map(|s| s.to_string()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn register_message(
+    msg: &Message,
+    name: Option<String>,
+    op_key: &str,
+    result: &mut Vec<Item<Message>>,
+    named_index: &mut HashMap<String, usize>,
+    anon_counter: &mut usize,
+) -> Result<(), SpecError> {
+    let payload_sig = msg
+        .payload
+        .as_ref()
+        .map(|p| p.source.clone())
+        .unwrap_or_default();
+
+    match name {
+        Some(name) => {
+            if let Some(&idx) = named_index.get(&name) {
+                let existing_sig = result[idx]
+                    .item
+                    .payload
+                    .as_ref()
+                    .map(|p| p.source.clone())
+                    .unwrap_or_default();
+                if existing_sig != payload_sig {
+                    return Err(SpecError::ExtractionFailed(format!(
+                        "message name collision: '{}' refers to distinct payloads\n  existing: {}\n  new:      {}",
+                        name, existing_sig, payload_sig
+                    )));
+                }
+                // Same name + same payload → already registered, skip.
+            } else {
+                named_index.insert(name.clone(), result.len());
+                result.push(Item {
+                    key: name,
+                    item: msg.clone(),
+                });
+            }
+            Ok(())
+        }
+        None => {
+            let key = format!("{op_key}#{anon_counter}");
+            *anon_counter += 1;
+            result.push(Item {
+                key,
+                item: msg.clone(),
+            });
+            Ok(())
+        }
+    }
 }
 
 fn extract_operation(key: &str, value: &Value) -> Result<Operation, SpecError> {
@@ -377,7 +512,7 @@ mod tests {
 
     /// Verifies the extractor does not depend on a `components` section being present.
     ///
-    /// Calls `extract_document` directly on an inline `serde_json::Value` (bypassing
+    /// Calls `extract_document` directly on an inline `ResolvedDocument` (bypassing
     /// resolver + jsonschema validation) so the test exercises only the extract layer.
     #[test]
     fn extract_no_components_does_not_crash() {
@@ -425,7 +560,11 @@ mod tests {
             }
         });
 
-        let document = extract_document(&value)
+        let resolved = ResolvedDocument {
+            value: value.clone(),
+            provenance: crate::ref_resolver::ProvenanceRegistry::default(),
+        };
+        let document = extract_document(&resolved)
             .expect("extract_document must succeed on a spec with no components");
 
         assert!(!document.operations.is_empty());
@@ -496,5 +635,242 @@ mod tests {
             schema_keys.contains(&"lightMeasuredPayload"),
             "components.schemas must contain 'lightMeasuredPayload', got: {schema_keys:?}"
         );
+    }
+
+    // =========================================================================
+    // Dedup + collision-rule tests
+    // =========================================================================
+
+    fn empty_provenance() -> crate::ref_resolver::ProvenanceRegistry {
+        crate::ref_resolver::ProvenanceRegistry::default()
+    }
+
+    fn resolved(value: Value) -> ResolvedDocument {
+        ResolvedDocument {
+            value,
+            provenance: empty_provenance(),
+        }
+    }
+
+    /// Helper: a single-operation spec with one channel message.
+    fn spec_with_op_message(op_key: &str, msg_key: &str, payload_type: &str) -> Value {
+        serde_json::json!({
+            "operations": {
+                op_key: {
+                    "action": "send",
+                    "channel": {
+                        "address": "test",
+                        "messages": {
+                            msg_key: {
+                                "contentType": "application/json",
+                                "payload": { "type": payload_type }
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Channel message key is used as canonical name when `name`/`title` are absent.
+    #[test]
+    fn extract_message_canonical_name_falls_back_to_channel_key() {
+        let value = spec_with_op_message("sendFoo", "Foo", "object");
+        let document = extract_document(&resolved(value)).expect("extract must succeed");
+
+        assert_eq!(document.messages.len(), 1);
+        assert_eq!(document.messages[0].key, "Foo");
+    }
+
+    /// Explicit `name` field takes precedence over channel key.
+    #[test]
+    fn extract_message_canonical_name_prefers_explicit_name() {
+        let value = serde_json::json!({
+            "operations": {
+                "sendFoo": {
+                    "action": "send",
+                    "channel": {
+                        "address": "test",
+                        "messages": {
+                            "channel_key_ignored": {
+                                "name": "ExplicitName",
+                                "contentType": "application/json",
+                                "payload": { "type": "object" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let document = extract_document(&resolved(value)).expect("extract must succeed");
+
+        assert_eq!(document.messages.len(), 1);
+        assert_eq!(document.messages[0].key, "ExplicitName");
+    }
+
+    /// `title` is used when `name` is absent and channel key is unavailable.
+    #[test]
+    fn extract_message_canonical_name_uses_title() {
+        let value = serde_json::json!({
+            "operations": {
+                "sendFoo": {
+                    "action": "send",
+                    "channel": {
+                        "address": "test",
+                        "messages": {
+                            "channel_key": {
+                                "title": "TitledMessage",
+                                "contentType": "application/json",
+                                "payload": { "type": "object" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let document = extract_document(&resolved(value)).expect("extract must succeed");
+
+        assert_eq!(document.messages.len(), 1);
+        assert_eq!(document.messages[0].key, "TitledMessage");
+    }
+
+    /// Same message referenced from multiple operations dedupes to one entry.
+    #[test]
+    fn extract_dedupes_same_message_referenced_twice() {
+        let payload = serde_json::json!({"type": "object", "properties": {"n": {"type": "integer"}}});
+        let value = serde_json::json!({
+            "operations": {
+                "sendFoo": {
+                    "action": "send",
+                    "channel": {
+                        "address": "test",
+                        "messages": {
+                            "Foo": {
+                                "contentType": "application/json",
+                                "payload": payload
+                            }
+                        }
+                    }
+                },
+                "receiveFoo": {
+                    "action": "receive",
+                    "channel": {
+                        "address": "test",
+                        "messages": {
+                            "Foo": {
+                                "contentType": "application/json",
+                                "payload": payload
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let document = extract_document(&resolved(value)).expect("extract must succeed");
+
+        assert_eq!(
+            document.messages.len(),
+            1,
+            "same name + same payload must dedupe to one entry"
+        );
+        assert_eq!(document.messages[0].key, "Foo");
+    }
+
+    /// Two messages with same name but DIFFERENT payloads → extraction fails.
+    #[test]
+    fn extract_collision_same_name_different_payload_errors() {
+        let value = serde_json::json!({
+            "operations": {
+                "sendFoo": {
+                    "action": "send",
+                    "channel": {
+                        "address": "test",
+                        "messages": {
+                            "Foo": {
+                                "name": "Foo",
+                                "contentType": "application/json",
+                                "payload": { "type": "object", "properties": { "a": { "type": "string" } } }
+                            }
+                        }
+                    }
+                },
+                "receiveFoo": {
+                    "action": "receive",
+                    "channel": {
+                        "address": "test",
+                        "messages": {
+                            "Bar": {
+                                "name": "Foo",
+                                "contentType": "application/json",
+                                "payload": { "type": "object", "properties": { "b": { "type": "integer" } } }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let err = extract_document(&resolved(value))
+            .expect_err("collision must produce SpecError");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("collision") && msg.contains("Foo"),
+            "error must name the colliding message, got: {msg}"
+        );
+    }
+
+    /// Anonymous messages (no name, no title, in operation `messages` array)
+    /// are included verbatim with synthesized keys; no collision check.
+    #[test]
+    fn extract_anonymous_messages_included_verbatim() {
+        let value = serde_json::json!({
+            "operations": {
+                "multi": {
+                    "action": "send",
+                    "channel": { "address": "test" },
+                    "messages": [
+                        { "contentType": "application/json", "payload": { "type": "object", "properties": { "a": { "type": "string" } } } },
+                        { "contentType": "application/json", "payload": { "type": "object", "properties": { "b": { "type": "integer" } } } }
+                    ]
+                }
+            }
+        });
+        let document = extract_document(&resolved(value)).expect("extract must succeed");
+
+        assert_eq!(
+            document.messages.len(),
+            2,
+            "two distinct anonymous messages must both appear"
+        );
+        assert!(
+            document.messages[0].key.starts_with("multi#"),
+            "anonymous key must be synthesized from op key, got: {}",
+            document.messages[0].key
+        );
+        assert!(document.messages[1].key != document.messages[0].key);
+    }
+
+    /// `components/schemas/*` flows into `document.schemas` verbatim.
+    #[test]
+    fn extract_populates_document_schemas_from_components() {
+        let value = serde_json::json!({
+            "operations": {
+                "sendFoo": {
+                    "action": "send",
+                    "channel": { "address": "test" }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "User": { "type": "object", "properties": { "id": { "type": "string" } } },
+                    "Admin": { "type": "object", "properties": { "perms": { "type": "array", "items": { "type": "string" } } } }
+                }
+            }
+        });
+        let document = extract_document(&resolved(value)).expect("extract must succeed");
+
+        let schema_keys: Vec<&str> =
+            document.schemas.iter().map(|i| i.key.as_str()).collect();
+        assert!(schema_keys.contains(&"User"), "schemas must include User: {schema_keys:?}");
+        assert!(schema_keys.contains(&"Admin"), "schemas must include Admin: {schema_keys:?}");
     }
 }

@@ -18,6 +18,60 @@ pub enum RefError {
 
 pub type RefResult = Result<Shared<Value>, RefError>;
 
+/// Provenance of a resolved subtree: the JSON Reference (RFC) string for
+/// where this content originated in the source spec.
+///
+/// Format follows JSON Reference: `"<file>#/<json-pointer>"` for cross-file
+/// refs, or `"#/<json-pointer>"` for same-document refs. The path is a
+/// JSON Pointer per RFC 6901.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvenanceEntry {
+    /// Fully-qualified origin: `#/components/schemas/User` (same doc) or
+    /// `file:///abs/path.yaml#/User` (cross-file).
+    pub origin: String,
+}
+
+/// Sidecar registry mapping resolved-tree JSON Pointer → origin in source spec.
+///
+/// Built during `$ref` expansion. Every visited subtree (objects, arrays,
+/// primitives) is recorded. Keys are JSON Pointers into the resolved tree
+/// (e.g., `"#/operations/0/messages/0/payload/properties/user"`).
+///
+/// Discarded after extract; never leaks into the typed `Document` IR.
+#[derive(Debug, Default, Clone)]
+pub struct ProvenanceRegistry {
+    entries: HashMap<String, ProvenanceEntry>,
+}
+
+impl ProvenanceRegistry {
+    pub fn record(&mut self, resolved_path: String, entry: ProvenanceEntry) {
+        self.entries.insert(resolved_path, entry);
+    }
+
+    pub fn lookup(&self, resolved_path: &str) -> Option<&ProvenanceEntry> {
+        self.entries.get(resolved_path)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &ProvenanceEntry)> {
+        self.entries.iter()
+    }
+}
+
+/// Result of `$ref` expansion: clean resolved JSON + provenance sidecar.
+#[derive(Debug, Clone)]
+pub struct ResolvedDocument {
+    pub value: Value,
+    pub provenance: ProvenanceRegistry,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DocLocation {
     File(PathBuf),
@@ -119,20 +173,40 @@ impl RefResolver {
         self.resolve(doc_ref)
     }
 
-    pub fn resolve_recursive(&self, value: &Value, current_file: &str) -> Result<Value, RefError> {
-        self.resolve_recursive_with_stack(
+    pub fn resolve_recursive(
+        &self,
+        value: &Value,
+        current_file: &str,
+    ) -> Result<ResolvedDocument, RefError> {
+        let mut provenance = ProvenanceRegistry::default();
+        let value = self.resolve_recursive_with_stack(
             value,
             current_file,
+            "#",
+            "#",
             &mut std::collections::HashSet::new(),
-        )
+            &mut provenance,
+        )?;
+        Ok(ResolvedDocument { value, provenance })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn resolve_recursive_with_stack(
         &self,
         value: &Value,
         current_file: &str,
+        output_path: &str,
+        origin_path: &str,
         visited: &mut std::collections::HashSet<String>,
+        provenance: &mut ProvenanceRegistry,
     ) -> Result<Value, RefError> {
+        provenance.record(
+            output_path.to_string(),
+            ProvenanceEntry {
+                origin: origin_path.to_string(),
+            },
+        );
+
         match value {
             Value::Object(map) => {
                 if let Some(ref_str) = map.get("$ref").and_then(|v| v.as_str()) {
@@ -148,22 +222,47 @@ impl RefResolver {
                     visited.insert(ref_key.clone());
                     let resolved = (*self.resolve_ref(current_file, ref_str)?.clone()).clone();
 
-                    let (resolved_loc, _) = Self::parse_ref(ref_str, current_file)?;
+                    let (resolved_loc, resolved_addr) = Self::parse_ref(ref_str, current_file)?;
                     let next_file: &str = if resolved_loc.is_empty() {
                         current_file
                     } else {
                         &resolved_loc
                     };
 
-                    let result = self.resolve_recursive_with_stack(&resolved, next_file, visited);
+                    // The inlined content's origin is the ref target.
+                    // parse_ref returns the address part as `resolved_addr`,
+                    // which may be empty if the ref points to a whole doc;
+                    // normalize to "#" for the root.
+                    let new_origin_path = if resolved_addr.is_empty() {
+                        "#".to_string()
+                    } else {
+                        resolved_addr
+                    };
+
+                    let result = self.resolve_recursive_with_stack(
+                        &resolved,
+                        next_file,
+                        output_path,
+                        &new_origin_path,
+                        visited,
+                        provenance,
+                    );
                     visited.remove(&ref_key);
                     result
                 } else {
                     let mut new_map = serde_json::Map::new();
                     for (key, val) in map {
                         if key != "$ref" {
-                            let resolved =
-                                self.resolve_recursive_with_stack(val, current_file, visited)?;
+                            let child_output = json_pointer_child(output_path, key);
+                            let child_origin = json_pointer_child(origin_path, key);
+                            let resolved = self.resolve_recursive_with_stack(
+                                val,
+                                current_file,
+                                &child_output,
+                                &child_origin,
+                                visited,
+                                provenance,
+                            )?;
                             new_map.insert(key.clone(), resolved);
                         }
                     }
@@ -172,8 +271,18 @@ impl RefResolver {
             }
             Value::Array(arr) => {
                 let mut new_arr = Vec::new();
-                for item in arr {
-                    new_arr.push(self.resolve_recursive_with_stack(item, current_file, visited)?);
+                for (i, item) in arr.iter().enumerate() {
+                    let child_output = json_pointer_index(output_path, i);
+                    let child_origin = json_pointer_index(origin_path, i);
+                    let resolved = self.resolve_recursive_with_stack(
+                        item,
+                        current_file,
+                        &child_output,
+                        &child_origin,
+                        visited,
+                        provenance,
+                    )?;
+                    new_arr.push(resolved);
                 }
                 Ok(Value::Array(new_arr))
             }
@@ -273,6 +382,17 @@ impl RefResolver {
     }
 }
 
+/// Build a child JSON Pointer by appending `/key` (RFC 6901 escaped).
+fn json_pointer_child(parent: &str, key: &str) -> String {
+    let escaped = key.replace('~', "~0").replace('/', "~1");
+    format!("{parent}/{escaped}")
+}
+
+/// Build a child JSON Pointer by appending `/index`.
+fn json_pointer_index(parent: &str, index: usize) -> String {
+    format!("{parent}/{index}")
+}
+
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests;

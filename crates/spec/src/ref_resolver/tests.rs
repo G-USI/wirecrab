@@ -473,10 +473,11 @@ components:
     );
 
     let resolved = result.unwrap();
-    let op_msg_payload = &resolved["operations"]["sendUserSignedup"]["messages"][0]["payload"];
+    let op_msg_payload =
+        &resolved.value["operations"]["sendUserSignedup"]["messages"][0]["payload"];
     assert_eq!(op_msg_payload["properties"]["email"]["type"], "string");
     let chan_msg_payload =
-        &resolved["channels"]["userSignedup"]["messages"]["UserSignedUp"]["payload"];
+        &resolved.value["channels"]["userSignedup"]["messages"]["UserSignedUp"]["payload"];
     assert_eq!(chan_msg_payload["properties"]["email"]["type"], "string");
 }
 
@@ -602,7 +603,219 @@ channels:
     );
 
     let resolved = result.unwrap();
-    let payload = &resolved["channels"]["events"]["messages"]["userSignedUp"]["payload"];
+    let payload = &resolved.value["channels"]["events"]["messages"]["userSignedUp"]["payload"];
     assert_eq!(payload["properties"]["email"]["type"], "string");
     assert_eq!(payload["properties"]["id"]["format"], "uuid");
+}
+
+// =============================================================================
+// Provenance registry tests
+// =============================================================================
+
+/// Inline content (no `$ref`) records origin = position in resolved tree.
+#[test]
+fn provenance_inline_records_position() {
+    let yaml = r#"
+asyncapi: 3.0.0
+info:
+  title: Test
+  version: 1.0.0
+channels:
+  greetings:
+    address: greet
+    messages:
+      hello:
+        contentType: application/json
+        payload:
+          type: object
+          properties:
+            msg:
+              type: string
+"#;
+    let file = create_test_yaml(yaml);
+
+    let resolver = RefResolver::default();
+    let root = resolver
+        .resolve_ref(file.path().to_str().unwrap(), "#/")
+        .unwrap();
+    let root_value = root.as_ref().clone();
+
+    let resolved = resolver
+        .resolve_recursive(&root_value, file.path().to_str().unwrap())
+        .expect("resolve must succeed");
+
+    // Root records itself.
+    assert_eq!(resolved.provenance.lookup("#").unwrap().origin, "#");
+
+    // Each subtree records its resolved position.
+    assert_eq!(
+        resolved.provenance.lookup("#/asyncapi").unwrap().origin,
+        "#/asyncapi"
+    );
+    assert_eq!(
+        resolved
+            .provenance
+            .lookup("#/info/title")
+            .unwrap()
+            .origin,
+        "#/info/title"
+    );
+    assert_eq!(
+        resolved
+            .provenance
+            .lookup("#/channels/greetings/messages/hello/payload/properties/msg")
+            .unwrap()
+            .origin,
+        "#/channels/greetings/messages/hello/payload/properties/msg"
+    );
+}
+
+/// A `$ref` inlined into the resolved tree records origin = the ref's target,
+/// not the position where the ref appeared.
+#[test]
+fn provenance_ref_inlined_records_target() {
+    let yaml = r#"
+asyncapi: 3.0.0
+info:
+  title: Test
+  version: 1.0.0
+components:
+  messages:
+    Ping:
+      contentType: application/json
+      payload:
+        type: object
+        properties:
+          count:
+            type: integer
+channels:
+  ping:
+    address: /ping
+    messages:
+      ping_ref:
+        $ref: '#/components/messages/Ping'
+operations:
+  receive_ping:
+    action: receive
+    channel:
+      $ref: '#/channels/ping'
+"#;
+    let file = create_test_yaml(yaml);
+
+    let resolver = RefResolver::default();
+    let root = resolver
+        .resolve_ref(file.path().to_str().unwrap(), "#/")
+        .unwrap();
+    let root_value = root.as_ref().clone();
+
+    let resolved = resolver
+        .resolve_recursive(&root_value, file.path().to_str().unwrap())
+        .expect("resolve must succeed");
+
+    // The inlined message at the channel level: origin should be the
+    // components/messages/Ping target, NOT #/channels/ping/messages/ping_ref.
+    let inlined_origin = resolved
+        .provenance
+        .lookup("#/channels/ping/messages/ping_ref")
+        .expect("inlined message must have provenance entry")
+        .origin
+        .as_str();
+    assert!(
+        inlined_origin.contains("components/messages/Ping"),
+        "expected origin to point at components/messages/Ping, got: {inlined_origin}"
+    );
+
+    // Nested content of the inlined subtree also points at the target.
+    let nested_origin = resolved
+        .provenance
+        .lookup("#/channels/ping/messages/ping_ref/payload/properties/count")
+        .expect("nested inlined content must have provenance entry")
+        .origin
+        .as_str();
+    assert!(
+        nested_origin.contains("components/messages/Ping"),
+        "expected nested origin to point at components/messages/Ping, got: {nested_origin}"
+    );
+}
+
+/// Every primitive leaf is recorded too (full sidecar, per design).
+#[test]
+fn provenance_records_primitive_leaves() {
+    let yaml = r#"
+asyncapi: 3.0.0
+info:
+  title: T
+  version: 1.0.0
+"#;
+    let file = create_test_yaml(yaml);
+
+    let resolver = RefResolver::default();
+    let root = resolver
+        .resolve_ref(file.path().to_str().unwrap(), "#/")
+        .unwrap();
+    let root_value = root.as_ref().clone();
+
+    let resolved = resolver
+        .resolve_recursive(&root_value, file.path().to_str().unwrap())
+        .expect("resolve must succeed");
+
+    // Primitives are recorded.
+    assert!(resolved.provenance.lookup("#/asyncapi").is_some());
+    assert!(resolved.provenance.lookup("#/info/title").is_some());
+    assert!(resolved.provenance.lookup("#/info/version").is_some());
+}
+
+/// Array elements are indexed per RFC 6901.
+#[test]
+fn provenance_array_uses_indices() {
+    let yaml = r#"
+tags:
+  - name: alpha
+  - name: beta
+"#;
+    let file = create_test_yaml(yaml);
+
+    let resolver = RefResolver::default();
+    let root = resolver
+        .resolve_ref(file.path().to_str().unwrap(), "#/")
+        .unwrap();
+    let root_value = root.as_ref().clone();
+
+    let resolved = resolver
+        .resolve_recursive(&root_value, file.path().to_str().unwrap())
+        .expect("resolve must succeed");
+
+    assert!(resolved.provenance.lookup("#/tags/0/name").is_some());
+    assert!(resolved.provenance.lookup("#/tags/1/name").is_some());
+}
+
+/// JSON Pointer escaping (RFC 6901): `/` and `~` in object keys are escaped.
+#[test]
+fn provenance_escapes_slash_and_tilde_in_keys() {
+    let yaml = r#"
+weird/key:
+  value: 1
+weird~key:
+  value: 2
+"#;
+    let file = create_test_yaml(yaml);
+
+    let resolver = RefResolver::default();
+    let root = resolver
+        .resolve_ref(file.path().to_str().unwrap(), "#/")
+        .unwrap();
+    let root_value = root.as_ref().clone();
+
+    let resolved = resolver
+        .resolve_recursive(&root_value, file.path().to_str().unwrap())
+        .expect("resolve must succeed");
+
+    assert!(
+        resolved.provenance.lookup("#/weird~1key/value").is_some(),
+        "slash in key must be escaped as ~1"
+    );
+    assert!(
+        resolved.provenance.lookup("#/weird~0key/value").is_some(),
+        "tilde in key must be escaped as ~0"
+    );
 }

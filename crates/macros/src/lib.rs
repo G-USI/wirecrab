@@ -64,44 +64,20 @@ pub fn asyncapi(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Collect deduplicated `(name, schema_source)` pairs for all messages.
+/// Collect `(name, payload_source)` pairs from the deduplicated
+/// `Document::messages` IR field. The spec crate already handles dedup
+/// and collision detection — this is a pure projection.
 fn collect_message_schemas(doc: &Document) -> Vec<(String, String)> {
-    let mut schemas: Vec<(String, String)> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    // Collect messages from operations
-    for item in &doc.operations {
-        for msg in &item.item.messages {
-            if let Some(name) = &msg.name {
-                if seen.insert(name.clone()) {
-                    if let Some(payload) = &msg.payload {
-                        schemas.push((name.clone(), payload.source.clone()));
-                    }
-                }
+    doc.messages
+        .iter()
+        .filter_map(|item| {
+            // Skip synthesized anonymous-message keys (format `<op>#<n>`).
+            // typify needs a real name to bind the struct to.
+            if item.key.contains('#') {
+                return None;
             }
-        }
-        // Also check channel messages — use key as fallback for name
-        for ch_msg in &item.item.channel.messages {
-            let name = ch_msg.item.name.as_deref().unwrap_or(&ch_msg.key);
-            if seen.insert(name.to_string()) {
-                if let Some(payload) = &ch_msg.item.payload {
-                    schemas.push((name.to_string(), payload.source.clone()));
-                }
-            }
-        }
-    }
-
-    // Collect messages from components
-    if let Some(components) = &doc.components {
-        for item in &components.messages {
-            let name = item.item.name.as_deref().unwrap_or(&item.key);
-            if seen.insert(name.to_string()) {
-                if let Some(payload) = &item.item.payload {
-                    schemas.push((name.to_string(), payload.source.clone()));
-                }
-            }
-        }
-    }
-
-    schemas
+            let payload = item.item.payload.as_ref()?;
+            Some((item.key.clone(), payload.source.clone()))
+        })
+        .collect()
 }
