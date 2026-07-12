@@ -11,7 +11,7 @@ mod typegen;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{ItemStruct, LitStr, parse_macro_input};
+use syn::{parse_macro_input, ItemStruct, LitStr};
 
 use wirecrab_spec::Document;
 
@@ -25,7 +25,8 @@ pub fn asyncapi(attr: TokenStream, item: TokenStream) -> TokenStream {
     let struct_name = input.ident.clone();
 
     // Read and parse the spec file
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
 
     let full_path = if std::path::Path::new(&spec_path).is_absolute() {
         spec_path.clone()
@@ -43,8 +44,14 @@ pub fn asyncapi(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    // Generate message structs (typegen)
-    let struct_defs = generate_message_structs(&document);
+    // Collect all message schemas (deduplicated)
+    let schemas = collect_message_schemas(&document);
+
+    // Generate typed structs via typify
+    let struct_defs = match typegen::generate_types(&schemas) {
+        Ok(tokens) => tokens,
+        Err(e) => return e.to_compile_error().into(),
+    };
 
     // Generate application impl
     let impl_block = codegen::generate_impl(&struct_name, &document);
@@ -57,9 +64,9 @@ pub fn asyncapi(attr: TokenStream, item: TokenStream) -> TokenStream {
     .into()
 }
 
-/// Generate Rust structs for all message payloads in the document.
-fn generate_message_structs(doc: &Document) -> proc_macro2::TokenStream {
-    let mut structs: Vec<proc_macro2::TokenStream> = Vec::new();
+/// Collect deduplicated `(name, schema_source)` pairs for all messages.
+fn collect_message_schemas(doc: &Document) -> Vec<(String, String)> {
+    let mut schemas: Vec<(String, String)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Collect messages from operations
@@ -68,17 +75,17 @@ fn generate_message_structs(doc: &Document) -> proc_macro2::TokenStream {
             if let Some(name) = &msg.name {
                 if seen.insert(name.clone()) {
                     if let Some(payload) = &msg.payload {
-                        structs.push(typegen::generate_struct(name, &payload.source));
+                        schemas.push((name.clone(), payload.source.clone()));
                     }
                 }
             }
         }
-        // Also check channel messages
+        // Also check channel messages — use key as fallback for name
         for ch_msg in &item.item.channel.messages {
             let name = ch_msg.item.name.as_deref().unwrap_or(&ch_msg.key);
             if seen.insert(name.to_string()) {
                 if let Some(payload) = &ch_msg.item.payload {
-                    structs.push(typegen::generate_struct(name, &payload.source));
+                    schemas.push((name.to_string(), payload.source.clone()));
                 }
             }
         }
@@ -90,13 +97,11 @@ fn generate_message_structs(doc: &Document) -> proc_macro2::TokenStream {
             let name = item.item.name.as_deref().unwrap_or(&item.key);
             if seen.insert(name.to_string()) {
                 if let Some(payload) = &item.item.payload {
-                    structs.push(typegen::generate_struct(name, &payload.source));
+                    schemas.push((name.to_string(), payload.source.clone()));
                 }
             }
         }
     }
 
-    quote! {
-        #(#structs)*
-    }
+    schemas
 }
