@@ -11,6 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 wirecrab-spec = { workspace = true }
-wirecrab-codegen = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }

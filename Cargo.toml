@@ -3,7 +3,6 @@ resolver = "2"
 members = [
     "crates/kernel",
     "crates/spec",
-    "crates/codegen",
     "crates/macros",
     "crates/cli",
     "crates/contrib/contrib-wire-memory",
@@ -46,7 +45,6 @@ proc-macro2 = "1.0"
 tera = "1.20"
 wirecrab-kernel = { path = "crates/kernel" }
 wirecrab-spec = { path = "crates/spec" }
-wirecrab-codegen = { path = "crates/codegen" }
 wirecrab-macros = { path = "crates/macros" }
 wirecrab-contrib-codec-json = { path = "crates/contrib/contrib-codec-json" }
 wirecrab-contrib-wire-memory = { path = "crates/contrib/contrib-wire-memory" }
